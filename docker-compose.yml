@@ -1,0 +1,39 @@
+version: '3.8'
+services:
+  api:
+    build: ./app
+    container_name: weerwi_api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://weerwi_user:secretpassword@db:5432/weerwi_db
+      - REDIS_URL=redis://redis:6379/0
+      - OPENMETEO_URL=https://api.open-meteo.com/v1/forecast
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: weerwi_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: weerwi_user
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: weerwi_db
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    container_name: weerwi_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+volumes:
+  db_data:
+    driver: local
