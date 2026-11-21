@@ -1,7 +1,7 @@
 import os
 import math
 import ssl
-from datetime import date, datetime
+import datetime
 from typing import Optional
 
 import certifi
@@ -19,7 +19,7 @@ skyfield.iokit.create_default_context = lambda *a, **k: ssl.create_default_conte
 app = FastAPI(
     title="WeerWi API & App",
     description="API astronomique et météo pour le suivi lunaire en Afrique de l'Ouest",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 # Enable CORS for Flutter Web / Mobile apps
@@ -52,9 +52,10 @@ def load_ephemeris():
 class MoonRequest(BaseModel):
     latitude: float
     longitude: float
-    date: Optional[date] = None  # default today
+    date: Optional[str] = None  # Accepts "YYYY-MM-DD" or None for today
 
 class MoonResponse(BaseModel):
+    date: str
     phase: str
     illumination: float
     age_days: float
@@ -64,8 +65,9 @@ class MoonResponse(BaseModel):
     visibility_score: float
     cloud_cover: Optional[float] = None
     observation_tip: Optional[str] = None
+    ramadan_status: Optional[str] = None
 
-def compute_phase(lat: float, lon: float, target_date: date):
+def compute_phase(lat: float, lon: float, target_date: datetime.date):
     t = ts.utc(target_date.year, target_date.month, target_date.day)
     loc = earth + Topos(latitude_degrees=lat, longitude_degrees=lon)
     
@@ -104,7 +106,7 @@ def compute_phase(lat: float, lon: float, target_date: date):
         
     return phase, illumination, age, elong, alt, visible, score
 
-async def fetch_weather(lat: float, lon: float, target_date: date):
+async def fetch_weather(lat: float, lon: float, target_date: datetime.date):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -142,17 +144,43 @@ def api_info():
 
 @app.post("/moon", response_model=MoonResponse)
 async def get_moon(info: MoonRequest):
-    target = info.date or date.today()
+    if info.date and info.date.strip():
+        try:
+            target = datetime.date.fromisoformat(info.date.strip())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Format de date invalide. Utilisez YYYY-MM-DD.")
+    else:
+        target = datetime.date.today()
+
     phase, illum, age, elong, alt, visible, score = compute_phase(info.latitude, info.longitude, target)
     cloud = await fetch_weather(info.latitude, info.longitude, target)
     
-    tip = "Conditions astronomiques favorables pour observer le croissant à l'œil nu."
-    if cloud is not None and cloud > 70:
-        tip = f"Couverture nuageuse élevée ({int(cloud)}%), l'observation risque d'être bloquée par les nuages."
-    elif not visible:
-        tip = "Croissant non visible à l'œil nu ce jour (sous l'horizon ou trop proche du Soleil)."
+    # Observation diagnostic
+    if visible:
+        if cloud is not None and cloud > 75:
+            tip = f"Le croissant est au-dessus de l'horizon, mais le ciel est très nuageux ({int(cloud)}%). Privilégiez un endroit dégagé ou des instruments optiques."
+        elif cloud is not None and cloud > 35:
+            tip = f"Croissant théoriquement visible ! Nuages partiels ({int(cloud)}%). Surveillez l'horizon ouest juste après le coucher du soleil."
+        else:
+            tip = "Excellentes conditions ! Ciel dégagé et croissant favorable pour une observation nette à l'œil nu à l'ouest."
+    else:
+        if alt <= 0:
+            tip = "La lune se couche avant ou avec le soleil. Impossible à observer ce soir-là (sous l'horizon)."
+        elif elong <= 7.5:
+            tip = "La lune est trop proche du disque solaire (élongation < 7.5°). Le croissant est noyé dans l'éclat du crépuscule (Limite de Danjon)."
+        else:
+            tip = "Croissant non visible à l'œil nu selon les critères astronomiques rigoureux."
+
+    # Statut Ramadan / Hilal
+    if "croissant" in phase.lower() or visible:
+        ramadan_status = "Nouveau mois lunaire visible (1er jour du mois dès le lendemain si observé au coucher)."
+    elif "nouvelle lune" in phase.lower() or age < 1.0:
+        ramadan_status = "Jour de conjonction astronomique (29e jour du mois : observation du croissant ce soir)."
+    else:
+        ramadan_status = f"Phase intermédiaire ({phase})."
 
     return MoonResponse(
+        date=target.isoformat(),
         phase=phase,
         illumination=round(illum, 2),
         age_days=round(age, 2),
@@ -162,6 +190,7 @@ async def get_moon(info: MoonRequest):
         visibility_score=round(score, 2),
         cloud_cover=round(cloud, 2) if cloud is not None else None,
         observation_tip=tip,
+        ramadan_status=ramadan_status,
     )
 
 # Mount Flutter Web app at root /
