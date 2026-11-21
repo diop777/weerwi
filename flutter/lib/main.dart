@@ -1,245 +1,220 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
+// ─────────────────────────── Palette cosmique ───────────────────────────
+const kGold = Color(0xFFFFD872);
+const kGoldDeep = Color(0xFFFFB347);
+const kCyan = Color(0xFF7DF9FF);
+const kViolet = Color(0xFFA98BFF);
+const kGreen = Color(0xFF6CFFB0);
+const kOrange = Color(0xFFFFA45C);
+const kSpace = Color(0xFF02030A);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     await Firebase.initializeApp();
-  } catch (e) {
-    debugPrint("Firebase info: $e");
+  } catch (_) {
+    // Firebase sera configuré plus tard (google-services.json)
   }
   runApp(const WeerWiApp());
 }
 
 class WeerWiApp extends StatelessWidget {
-  const WeerWiApp({Key? key}) : super(key: key);
+  const WeerWiApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'WeerWi • Observatoire Lunaire',
+      title: 'WeerWi • Votre astronaute lunaire',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
-        fontFamily: 'Segoe UI',
-        scaffoldBackgroundColor: const Color(0xFF090B14),
-        cardColor: const Color(0xFF13182C),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFFFD54F),
-          secondary: Color(0xFF64FFDA),
-          surface: Color(0xFF13182C),
-        ),
+        useMaterial3: true,
+        scaffoldBackgroundColor: kSpace,
+        colorScheme: ColorScheme.fromSeed(seedColor: kGold, brightness: Brightness.dark),
       ),
       home: const HomeScreen(),
     );
   }
 }
 
+// ─────────────────────────── Villes ───────────────────────────
 class WestAfricanCity {
   final String name;
   final String country;
   final String flag;
   final double lat;
   final double lon;
-
-  const WestAfricanCity({
-    required this.name,
-    required this.country,
-    required this.flag,
-    required this.lat,
-    required this.lon,
-  });
+  const WestAfricanCity(this.name, this.country, this.flag, this.lat, this.lon);
 }
 
 const List<WestAfricanCity> kCities = [
-  WestAfricanCity(name: 'Dakar', country: 'Sénégal', flag: '🇸🇳', lat: 14.6937, lon: -17.4441),
-  WestAfricanCity(name: 'Touba', country: 'Sénégal', flag: '🇸🇳', lat: 14.8647, lon: -15.8756),
-  WestAfricanCity(name: 'Bamako', country: 'Mali', flag: '🇲🇱', lat: 12.6392, lon: -8.0029),
-  WestAfricanCity(name: 'Abidjan', country: "Côte d'Ivoire", flag: '🇨🇮', lat: 5.3600, lon: -4.0083),
-  WestAfricanCity(name: 'Ouagadougou', country: 'Burkina Faso', flag: '🇧🇫', lat: 12.3714, lon: -1.5197),
-  WestAfricanCity(name: 'Niamey', country: 'Niger', flag: '🇳🇪', lat: 13.5116, lon: 2.1254),
-  WestAfricanCity(name: 'Conakry', country: 'Guinée', flag: '🇬🇳', lat: 9.6412, lon: -13.5784),
-  WestAfricanCity(name: 'Nouakchott', country: 'Mauritanie', flag: '🇲🇷', lat: 18.0735, lon: -15.9582),
-  WestAfricanCity(name: 'Banjul', country: 'Gambie', flag: '🇬🇲', lat: 13.4549, lon: -16.5790),
-  WestAfricanCity(name: 'Lomé', country: 'Togo', flag: '🇹🇬', lat: 6.1375, lon: 1.2125),
-  WestAfricanCity(name: 'Cotonou', country: 'Bénin', flag: '🇧🇯', lat: 6.3654, lon: 2.4183),
+  WestAfricanCity('Dakar', 'Sénégal', '🇸🇳', 14.6937, -17.4441),
+  WestAfricanCity('Touba', 'Sénégal', '🇸🇳', 14.8647, -15.8756),
+  WestAfricanCity('Bamako', 'Mali', '🇲🇱', 12.6392, -8.0029),
+  WestAfricanCity('Abidjan', "Côte d'Ivoire", '🇨🇮', 5.3600, -4.0083),
+  WestAfricanCity('Ouagadougou', 'Burkina Faso', '🇧🇫', 12.3714, -1.5197),
+  WestAfricanCity('Niamey', 'Niger', '🇳🇪', 13.5116, 2.1254),
+  WestAfricanCity('Conakry', 'Guinée', '🇬🇳', 9.6412, -13.5784),
+  WestAfricanCity('Nouakchott', 'Mauritanie', '🇲🇷', 18.0735, -15.9582),
+  WestAfricanCity('Banjul', 'Gambie', '🇬🇲', 13.4549, -16.5790),
+  WestAfricanCity('Lomé', 'Togo', '🇹🇬', 6.1375, 1.2125),
+  WestAfricanCity('Cotonou', 'Bénin', '🇧🇯', 6.3654, 2.4183),
 ];
 
+// ─────────────────────────── Écran principal ───────────────────────────
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  WestAfricanCity _selectedCity = kCities[0];
-  late TextEditingController _latController;
-  late TextEditingController _lonController;
-  DateTime _selectedDate = DateTime.now();
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  WestAfricanCity _city = kCities[0];
+  late final TextEditingController _latCtrl;
+  late final TextEditingController _lonCtrl;
+  DateTime _date = DateTime.now();
   Map<String, dynamic>? _result;
   bool _loading = false;
-  String? _errorMessage;
+  String? _error;
+
+  late final AnimationController _float;
+  late final AnimationController _orbit;
+  late final AnimationController _pulse;
 
   @override
   void initState() {
     super.initState();
-    _latController = TextEditingController(text: _selectedCity.lat.toString());
-    _lonController = TextEditingController(text: _selectedCity.lon.toString());
+    _latCtrl = TextEditingController(text: _city.lat.toString());
+    _lonCtrl = TextEditingController(text: _city.lon.toString());
+    _float = AnimationController(vsync: this, duration: const Duration(seconds: 7))..repeat();
+    _orbit = AnimationController(vsync: this, duration: const Duration(seconds: 18))..repeat();
+    _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
+      ..repeat(reverse: true);
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetchMoon());
   }
 
   @override
   void dispose() {
-    _latController.dispose();
-    _lonController.dispose();
+    _latCtrl.dispose();
+    _lonCtrl.dispose();
+    _float.dispose();
+    _orbit.dispose();
+    _pulse.dispose();
     super.dispose();
   }
 
-  void _selectCity(WestAfricanCity city) {
+  Uri get _apiUri =>
+      kIsWeb ? Uri.base.resolve('/moon') : Uri.parse('http://localhost:8000/moon');
+
+  String _isoDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  String _frDate(DateTime d) {
+    const months = [
+      'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+      'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
+  }
+
+  void _selectCity(WestAfricanCity c) {
     setState(() {
-      _selectedCity = city;
-      _latController.text = city.lat.toString();
-      _lonController.text = city.lon.toString();
+      _city = c;
+      _latCtrl.text = c.lat.toString();
+      _lonCtrl.text = c.lon.toString();
     });
     _fetchMoon();
   }
 
   Future<void> _fetchMoon() async {
-    final lat = double.tryParse(_latController.text);
-    final lon = double.tryParse(_lonController.text);
+    final lat = double.tryParse(_latCtrl.text.replaceAll(',', '.'));
+    final lon = double.tryParse(_lonCtrl.text.replaceAll(',', '.'));
     if (lat == null || lon == null) {
-      setState(() => _errorMessage = "Coordonnées GPS invalides.");
+      setState(() => _error = 'Coordonnées GPS invalides.');
       return;
     }
-
     setState(() {
       _loading = true;
-      _errorMessage = null;
+      _error = null;
     });
-
     try {
-      final dateStr = "${_selectedDate.year.toString().padLeft(4, '0')}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}";
-      final uri = Uri.parse('/moon'); // Same origin host
-      final response = await http
+      final res = await http
           .post(
-            uri,
+            _apiUri,
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'latitude': lat,
-              'longitude': lon,
-              'date': dateStr,
-            }),
+            body: jsonEncode({'latitude': lat, 'longitude': lon, 'date': _isoDate(_date)}),
           )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        setState(() {
-          _result = jsonDecode(response.body);
-          _errorMessage = null;
-        });
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode == 200) {
+        setState(() => _result = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
       } else {
-        setState(() {
-          _errorMessage = "Erreur serveur (${response.statusCode}) : ${response.body}";
-        });
+        setState(() => _error = 'Le serveur a répondu ${res.statusCode}.');
       }
     } catch (e) {
-      // Fallback localhost:8000 si exécuté hors navigateur ou port différent
-      try {
-        final dateStr = "${_selectedDate.year.toString().padLeft(4, '0')}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}";
-        final uriFallback = Uri.parse('http://localhost:8000/moon');
-        final response = await http
-            .post(
-              uriFallback,
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'latitude': lat,
-                'longitude': lon,
-                'date': dateStr,
-              }),
-            )
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          setState(() {
-            _result = jsonDecode(response.body);
-            _errorMessage = null;
-          });
-        } else {
-          setState(() => _errorMessage = "Erreur : ${response.statusCode}");
-        }
-      } catch (e2) {
-        setState(() => _errorMessage = "Connexion au serveur impossible : $e2");
-      }
+      setState(() => _error = 'Contact perdu avec la station (serveur injoignable).');
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
+  // ─────────────────────────── BUILD ───────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // Arrière-plan animé ciel étoilé
-          const StarryBackground(),
+          const Positioned.fill(child: CosmicBackground()),
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 200,
+            child: IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
+          ),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 210),
               child: Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 850),
+                  constraints: const BoxConstraints(maxWidth: 920),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Header somptueux
-                      _buildHeader(),
-                      const SizedBox(height: 20),
-
-                      // Bandeau Villes d'Afrique de l'Ouest
-                      _buildCitySelector(),
-                      const SizedBox(height: 16),
-
-                      // Contrôles Date & Recherche
-                      _buildControlPanel(),
-                      const SizedBox(height: 20),
-
-                      // Message d'erreur s'il y a lieu
-                      if (_errorMessage != null) _buildErrorCard(),
-
-                      // Indicateur de chargement
-                      if (_loading)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 40),
-                          child: Center(
-                            child: Column(
-                              children: [
-                                CircularProgressIndicator(color: Color(0xFFFFD54F)),
-                                SizedBox(height: 16),
-                                Text(
-                                  "Calculs astronomiques Skyfield & NASA en cours...",
-                                  style: TextStyle(color: Colors.white70, fontSize: 14),
-                                )
-                              ],
-                            ),
+                      _header(),
+                      const SizedBox(height: 8),
+                      _hero(),
+                      const SizedBox(height: 18),
+                      _sectionTitle(Icons.public_rounded, "POINT D'OBSERVATION • AFRIQUE DE L'OUEST"),
+                      const SizedBox(height: 10),
+                      _cityChips(),
+                      const SizedBox(height: 18),
+                      _missionControl(),
+                      if (_error != null) ...[const SizedBox(height: 16), _errorCard()],
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 600),
+                        switchInCurve: Curves.easeOutCubic,
+                        transitionBuilder: (child, anim) => FadeTransition(
+                          opacity: anim,
+                          child: SlideTransition(
+                            position: Tween(begin: const Offset(0, 0.04), end: Offset.zero).animate(anim),
+                            child: child,
                           ),
                         ),
-
-                      // Résultats Visuels
-                      if (_result != null && !_loading) ...[
-                        _buildMoonCard(_result!),
-                        const SizedBox(height: 20),
-                        _buildRamadanCard(_result!),
-                        const SizedBox(height: 20),
-                        _buildMetricsGrid(_result!),
-                      ],
-
-                      const SizedBox(height: 40),
-                      _buildFooter(),
+                        child: _result == null
+                            ? const SizedBox.shrink()
+                            : _results(_result!),
+                      ),
+                      const SizedBox(height: 28),
+                      _footer(),
                     ],
                   ),
                 ),
@@ -251,721 +226,1109 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            const Color(0xFF181D38).withOpacity(0.9),
-            const Color(0xFF0F1224).withOpacity(0.9),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFFFD54F).withOpacity(0.3), width: 1.2),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFFFFD54F).withOpacity(0.08),
-            blurRadius: 30,
-            spreadRadius: 2,
-          )
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: const RadialGradient(
-                colors: [Color(0xFFFFE082), Color(0xFFFFB300)],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFFFFB300).withOpacity(0.4),
-                  blurRadius: 16,
-                  spreadRadius: 3,
-                )
-              ],
-            ),
-            child: const Icon(Icons.nightlight_round, color: Color(0xFF0E111E), size: 32),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'WeerWi',
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFD54F).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: const Text(
-                        'وِيرْ وِي • ASTRONOMIE',
-                        style: TextStyle(
-                          color: Color(0xFFFFD54F),
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Observatoire Scientifique & Visibilité du Croissant Lunaire (Afrique de l’Ouest)',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCitySelector() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  // ─────────────────────────── En-tête ───────────────────────────
+  Widget _header() {
+    return Row(
       children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 8),
-          child: Text(
-            "🌍 CHOISIR UNE VILLE D'AFRIQUE DE L'OUEST :",
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFFFFD54F),
-              letterSpacing: 1,
-            ),
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const RadialGradient(colors: [Color(0xFFFFF4C2), kGoldDeep]),
+            boxShadow: [BoxShadow(color: kGold.withOpacity(0.55), blurRadius: 22, spreadRadius: 1)],
+          ),
+          child: const Icon(Icons.nightlight_round, color: Color(0xFF14102A), size: 28),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ShaderMask(
+                shaderCallback: (b) => const LinearGradient(
+                  colors: [kGold, Colors.white, kCyan],
+                ).createShader(b),
+                child: const Text(
+                  'WeerWi',
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 3,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Votre astronaute personnel • Observatoire du Hilal',
+                style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 0.4),
+              ),
+            ],
           ),
         ),
-        SizedBox(
-          height: 44,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: kCities.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final city = kCities[index];
-              final isSelected = city.name == _selectedCity.name;
-              return InkWell(
-                onTap: () => _selectCity(city),
-                borderRadius: BorderRadius.circular(14),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        AnimatedBuilder(
+          animation: _pulse,
+          builder: (context, _) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: kGreen.withOpacity(0.35)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
                   decoration: BoxDecoration(
-                    color: isSelected
-                        ? const Color(0xFFFFD54F)
-                        : const Color(0xFF141930).withOpacity(0.8),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isSelected
-                          ? const Color(0xFFFFD54F)
-                          : Colors.white12,
-                      width: isSelected ? 1.5 : 1,
-                    ),
-                    boxShadow: isSelected
-                        ? [
-                            BoxShadow(
-                              color: const Color(0xFFFFD54F).withOpacity(0.3),
-                              blurRadius: 10,
-                            )
-                          ]
-                        : null,
-                  ),
-                  child: Row(
-                    children: [
-                      Text(city.flag, style: const TextStyle(fontSize: 16)),
-                      const SizedBox(width: 6),
-                      Text(
-                        city.name,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                          color: isSelected ? const Color(0xFF0C0F1D) : Colors.white,
-                        ),
-                      ),
+                    shape: BoxShape.circle,
+                    color: kGreen,
+                    boxShadow: [
+                      BoxShadow(color: kGreen.withOpacity(0.3 + 0.6 * _pulse.value), blurRadius: 10, spreadRadius: 2),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
+                const Text(
+                  'EN ORBITE',
+                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.8, color: kGreen),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────── Lune héroïque ───────────────────────────
+  Widget _hero() {
+    final illum = (_result?['illumination'] as num?)?.toDouble() ?? 50.0;
+    final phase = (_result?['phase'] as String?) ?? 'Scan du ciel…';
+    final visible = (_result?['visible'] as bool?) ?? false;
+    final lat = double.tryParse(_latCtrl.text) ?? _city.lat;
+    final lon = double.tryParse(_lonCtrl.text) ?? _city.lon;
+    final coords =
+        '${lat.abs().toStringAsFixed(2)}°${lat >= 0 ? 'N' : 'S'}  ·  ${lon.abs().toStringAsFixed(2)}°${lon >= 0 ? 'E' : 'O'}';
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 320,
+          child: AnimatedBuilder(
+            animation: Listenable.merge([_float, _orbit, _pulse]),
+            builder: (context, _) {
+              final dy = math.sin(_float.value * 2 * math.pi) * 9;
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  CustomPaint(size: const Size(380, 320), painter: OrbitPainter(_orbit.value)),
+                  Transform.translate(
+                    offset: Offset(0, dy),
+                    child: CustomPaint(
+                      size: const Size(220, 220),
+                      painter: MoonPainter(illumination: illum, glow: 0.65 + 0.35 * _pulse.value),
+                    ),
+                  ),
+                ],
               );
             },
           ),
         ),
+        Text(
+          phase,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            letterSpacing: 0.5,
+            shadows: [Shadow(color: kGold, blurRadius: 18)],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${_city.flag}  ${_city.name}, ${_city.country}   •   ${_frDate(_date)}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '📡  $coords',
+          style: TextStyle(color: kCyan.withOpacity(0.75), fontSize: 11, letterSpacing: 1.5),
+        ),
+        const SizedBox(height: 14),
+        if (_loading)
+          SizedBox(
+            width: 220,
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: const LinearProgressIndicator(
+                    minHeight: 3,
+                    color: kGold,
+                    backgroundColor: Colors.white10,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text('Calculs astronomiques en cours…',
+                    style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
+              ],
+            ),
+          )
+        else if (_result != null)
+          _visibilityBadge(visible),
       ],
     );
   }
 
-  Widget _buildControlPanel() {
-    final dateDisplay =
-        "${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}";
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF12162B).withOpacity(0.85),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white12),
+  Widget _visibilityBadge(bool visible) {
+    final color = visible ? kGreen : kOrange;
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, _) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(40),
+          gradient: LinearGradient(colors: [color.withOpacity(0.22), color.withOpacity(0.06)]),
+          border: Border.all(color: color.withOpacity(0.8), width: 1.3),
+          boxShadow: [BoxShadow(color: color.withOpacity(0.15 + 0.2 * _pulse.value), blurRadius: 26)],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(visible ? Icons.visibility_rounded : Icons.visibility_off_rounded, color: color, size: 18),
+            const SizedBox(width: 10),
+            Text(
+              visible ? 'VISIBLE À L’ŒIL NU' : 'NON VISIBLE À L’ŒIL NU',
+              style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 1.6),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  // ─────────────────────────── Villes ───────────────────────────
+  Widget _cityChips() {
+    return SizedBox(
+      height: 46,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: kCities.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, i) {
+          final c = kCities[i];
+          final sel = c.name == _city.name;
+          return InkWell(
+            borderRadius: BorderRadius.circular(30),
+            onTap: () => _selectCity(c),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                gradient: sel
+                    ? const LinearGradient(colors: [kGoldDeep, kGold])
+                    : LinearGradient(colors: [
+                        const Color(0xFF1A1F45).withOpacity(0.75),
+                        const Color(0xFF0C0F2A).withOpacity(0.6),
+                      ]),
+                border: Border.all(color: sel ? kGold : Colors.white.withOpacity(0.14)),
+                boxShadow: sel ? [BoxShadow(color: kGold.withOpacity(0.45), blurRadius: 16)] : null,
+              ),
+              child: Row(
+                children: [
+                  Text(c.flag, style: const TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Text(
+                    c.name,
+                    style: TextStyle(
+                      color: sel ? const Color(0xFF16112B) : Colors.white,
+                      fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ─────────────────────────── Centre de contrôle ───────────────────────────
+  Widget _missionControl() {
+    return _glass(
+      accent: kGold,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _sectionTitle(Icons.satellite_alt_rounded, 'CENTRE DE CONTRÔLE DE MISSION'),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
-                flex: 3,
                 child: InkWell(
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: _selectedDate,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2040),
-                      builder: (context, child) {
-                        return Theme(
-                          data: ThemeData.dark().copyWith(
-                            colorScheme: const ColorScheme.dark(
-                              primary: Color(0xFFFFD54F),
-                              onPrimary: Color(0xFF0C0F1D),
-                              surface: Color(0xFF161B33),
-                              onSurface: Colors.white,
-                            ),
-                          ),
-                          child: child!,
-                        );
-                      },
-                    );
-                    if (picked != null) {
-                      setState(() => _selectedDate = picked);
-                      _fetchMoon();
-                    }
-                  },
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: _pickDate,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF191F3B),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white12),
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white.withOpacity(0.04),
+                      border: Border.all(color: Colors.white.withOpacity(0.12)),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.calendar_today_rounded, color: Color(0xFFFFD54F), size: 18),
-                        const SizedBox(width: 10),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text("Date d'observation", style: TextStyle(color: Colors.white54, fontSize: 10)),
-                            Text(dateDisplay, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                          ],
+                        const Icon(Icons.event_rounded, color: kGold, size: 20),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text("DATE D'OBSERVATION",
+                                  style: TextStyle(color: Colors.white38, fontSize: 9, letterSpacing: 1.5)),
+                              const SizedBox(height: 2),
+                              Text(_frDate(_date),
+                                  style: const TextStyle(
+                                      color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                            ],
+                          ),
                         ),
-                        const Spacer(),
-                        const Icon(Icons.arrow_drop_down, color: Colors.white70),
+                        const Icon(Icons.expand_more_rounded, color: Colors.white54),
                       ],
                     ),
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              ElevatedButton.icon(
-                onPressed: () {
-                  setState(() => _selectedDate = DateTime.now());
+              const SizedBox(width: 10),
+              InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  setState(() => _date = DateTime.now());
                   _fetchMoon();
                 },
-                icon: const Icon(Icons.today, size: 16),
-                label: const Text("Aujourd'hui"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF22294E),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 17),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: kCyan.withOpacity(0.08),
+                    border: Border.all(color: kCyan.withOpacity(0.35)),
+                  ),
+                  child: const Text("Aujourd'hui",
+                      style: TextStyle(color: kCyan, fontWeight: FontWeight.w600, fontSize: 13)),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _latController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    labelText: "Latitude (${_selectedCity.name})",
-                    labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
-                    filled: true,
-                    fillColor: const Color(0xFF191F3B),
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  ),
-                  keyboardType: TextInputType.number,
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              iconColor: Colors.white54,
+              collapsedIconColor: Colors.white38,
+              shape: const Border(),
+              collapsedShape: const Border(),
+              title: const Text('Coordonnées GPS personnalisées',
+                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: _coordField(_latCtrl, 'Latitude')),
+                    const SizedBox(width: 10),
+                    Expanded(child: _coordField(_lonCtrl, 'Longitude')),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TextField(
-                  controller: _lonController,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: InputDecoration(
-                    labelText: "Longitude (${_selectedCity.name})",
-                    labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
-                    filled: true,
-                    fillColor: const Color(0xFF191F3B),
-                    isDense: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                  ),
-                  keyboardType: TextInputType.number,
-                ),
-              ),
-              const SizedBox(width: 12),
-              ElevatedButton(
-                onPressed: _loading ? null : _fetchMoon,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFFFD54F),
-                  foregroundColor: const Color(0xFF0C0F1D),
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 6,
-                ),
-                child: const Text("Calculer", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              ),
-            ],
+                const SizedBox(height: 6),
+              ],
+            ),
           ),
+          _launchButton(),
         ],
       ),
     );
   }
 
-  Widget _buildMoonCard(Map<String, dynamic> data) {
-    final bool isVisible = data['visible'] ?? false;
-    final String phase = data['phase'] ?? 'Non déterminée';
-    final double illumination = (data['illumination'] as num?)?.toDouble() ?? 0.0;
-    final double age = (data['age_days'] as num?)?.toDouble() ?? 0.0;
-    final String tip = data['observation_tip'] ?? '';
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isVisible
-              ? [const Color(0xFF0F261F), const Color(0xFF131D2F)]
-              : [const Color(0xFF261A14), const Color(0xFF16192E)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+  Widget _coordField(TextEditingController c, String label) {
+    return TextField(
+      controller: c,
+      style: const TextStyle(color: Colors.white, fontSize: 13),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white38, fontSize: 12),
+        isDense: true,
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.04),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
         ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isVisible ? const Color(0xFF00E676).withOpacity(0.5) : const Color(0xFFFF9100).withOpacity(0.4),
-          width: 1.5,
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: kGold),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: isVisible ? const Color(0xFF00E676).withOpacity(0.12) : const Color(0xFFFF9100).withOpacity(0.1),
-            blurRadius: 24,
-            spreadRadius: 2,
-          )
-        ],
       ),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    );
+  }
+
+  Widget _launchButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: _loading ? null : _fetchMoon,
+        child: Ink(
+          height: 56,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: const LinearGradient(colors: [kGoldDeep, kGold, Color(0xFFFFF0B3)]),
+            boxShadow: [BoxShadow(color: kGold.withOpacity(0.4), blurRadius: 24, offset: const Offset(0, 6))],
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _loading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.4, color: Color(0xFF16112B)),
+                    )
+                  : const Icon(Icons.rocket_launch_rounded, color: Color(0xFF16112B)),
+              const SizedBox(width: 12),
+              Text(
+                _loading ? 'EXPLORATION DU CIEL…' : 'LANCER L’ANALYSE DU CIEL',
+                style: const TextStyle(
+                  color: Color(0xFF16112B),
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14,
+                  letterSpacing: 1.6,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2040),
+      builder: (context, child) => Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: kGold,
+            onPrimary: Color(0xFF16112B),
+            surface: Color(0xFF12153A),
+            onSurface: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      setState(() => _date = picked);
+      _fetchMoon();
+    }
+  }
+
+  // ─────────────────────────── Résultats ───────────────────────────
+  Widget _results(Map<String, dynamic> d) {
+    final visible = (d['visible'] as bool?) ?? false;
+    final illum = (d['illumination'] as num?)?.toDouble() ?? 0;
+    final elong = (d['elongation_deg'] as num?)?.toDouble() ?? 0;
+    final alt = (d['altitude_deg'] as num?)?.toDouble() ?? 0;
+    final age = (d['age_days'] as num?)?.toDouble() ?? 0;
+    final cloud = (d['cloud_cover'] as num?)?.toDouble();
+    final tip = (d['observation_tip'] as String?) ?? '';
+    final ramadan = (d['ramadan_status'] as String?) ?? '';
+    final accent = visible ? kGreen : kOrange;
+
+    return Column(
+      key: ValueKey(jsonEncode(d)),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 22),
+        _glass(
+          accent: accent,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Visualiseur dynamique de la lune
-              CustomPaint(
-                size: const Size(90, 90),
-                painter: MoonPhasePainter(illumination: illumination),
+              _sectionTitle(Icons.person_pin_circle_rounded, 'RAPPORT DE VOTRE ASTRONAUTE', color: accent),
+              const SizedBox(height: 12),
+              Text(tip, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.5)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        _glass(
+          accent: kViolet,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kViolet.withOpacity(0.15),
+                  border: Border.all(color: kViolet.withOpacity(0.5)),
+                ),
+                child: const Icon(Icons.mosque_rounded, color: kGold, size: 26),
               ),
-              const SizedBox(width: 20),
+              const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isVisible ? const Color(0xFF00E676).withOpacity(0.2) : const Color(0xFFFF9100).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: isVisible ? const Color(0xFF00E676) : const Color(0xFFFF9100),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isVisible ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                            color: isVisible ? const Color(0xFF00E676) : const Color(0xFFFF9100),
-                            size: 16,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            isVisible ? 'CROISSANT VISIBLE À L’ŒIL NU' : 'NON VISIBLE À L’ŒIL NU CE SOIR',
-                            style: TextStyle(
-                              color: isVisible ? const Color(0xFF00E676) : const Color(0xFFFF9100),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      phase,
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "Âge de la lune : ${age.toStringAsFixed(1)} jours après la nouvelle lune",
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
+                    _sectionTitle(null, 'MOIS LUNAIRE • RAMADAN', color: kViolet),
+                    const SizedBox(height: 8),
+                    Text(ramadan,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600, height: 1.45)),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.25),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white10),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.wb_twilight_rounded, color: Color(0xFFFFD54F), size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    tip,
-                    style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.4),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRamadanCard(Map<String, dynamic> data) {
-    final String ramadan = data['ramadan_status'] ?? 'Observation normale';
-    final double? cloud = (data['cloud_cover'] as num?)?.toDouble();
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E1A38), Color(0xFF141933)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF9FA8DA).withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              Icon(Icons.mosque_rounded, color: Color(0xFFFFD54F), size: 22),
-              SizedBox(width: 10),
-              Text(
-                "CONTEXTE DU MOIS LUNAIRE & DÉBUT DU RAMADAN",
-                style: TextStyle(
-                  color: Color(0xFFFFD54F),
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            ramadan,
-            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F1327),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.cloud_queue_rounded, color: Color(0xFF81D4FA), size: 22),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Météo (ciel au crépuscule)", style: TextStyle(color: Colors.white54, fontSize: 11)),
-                          Text(
-                            cloud != null ? "${cloud.toStringAsFixed(0)}% de nuages" : "Météo calculée",
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F1327),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.shield_outlined, color: Color(0xFFA7FFEB), size: 22),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Critère scientifique", style: TextStyle(color: Colors.white54, fontSize: 11)),
-                          const Text(
-                            "Yallop & Danjon",
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetricsGrid(Map<String, dynamic> data) {
-    final double illum = (data['illumination'] as num?)?.toDouble() ?? 0.0;
-    final double elong = (data['elongation_deg'] as num?)?.toDouble() ?? 0.0;
-    final double alt = (data['altitude_deg'] as num?)?.toDouble() ?? 0.0;
-    final double age = (data['age_days'] as num?)?.toDouble() ?? 0.0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(left: 4, bottom: 10),
-          child: Text(
-            "DONNÉES ASTRONOMIQUES EXACTES (NASA EPHEMERIS DE421) :",
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.white60,
-              letterSpacing: 1,
-            ),
-          ),
-        ),
-        GridView.count(
-          crossAxisCount: 4,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: 1.25,
+        const SizedBox(height: 22),
+        _sectionTitle(Icons.speed_rounded, 'INSTRUMENTS DE BORD • NASA JPL DE421'),
+        const SizedBox(height: 12),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 12,
+          runSpacing: 12,
           children: [
-            _buildMetricBox("Illumination", "${illum.toStringAsFixed(1)}%", Icons.light_mode_rounded, const Color(0xFFFFD54F)),
-            _buildMetricBox("Élongation", "${elong.toStringAsFixed(1)}°", Icons.architecture_rounded, const Color(0xFF80D8FF)),
-            _buildMetricBox("Hauteur (Horizon)", "${alt.toStringAsFixed(1)}°", Icons.height_rounded, const Color(0xFFA7FFEB)),
-            _buildMetricBox("Âge Conjonction", "${age.toStringAsFixed(1)} j", Icons.timer_rounded, const Color(0xFFFFAB91)),
+            _gauge('ILLUMINATION', illum.toStringAsFixed(1), '%', illum / 100, kGold, Icons.light_mode_rounded),
+            _gauge('ÉLONGATION', elong.toStringAsFixed(1), 'degrés', elong / 180, kCyan, Icons.architecture_rounded),
+            _gauge('HAUTEUR', alt.toStringAsFixed(1), 'degrés', (alt + 90) / 180, kGreen, Icons.height_rounded),
+            _gauge('ÂGE LUNAIRE', age.toStringAsFixed(1), 'jours', age / 29.53, kViolet, Icons.hourglass_bottom_rounded),
+            _gauge('NUAGES', cloud == null ? '—' : cloud.toStringAsFixed(0), '%', (cloud ?? 0) / 100,
+                const Color(0xFF8EC5FF), Icons.cloud_rounded),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildMetricBox(String label, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF13172E),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white54, fontSize: 10),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildErrorCard() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF33141E),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline, color: Colors.redAccent, size: 24),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              _errorMessage!,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+  Widget _gauge(String label, String value, String unit, double fraction, Color color, IconData icon) {
+    return SizedBox(
+      width: 160,
+      child: _glass(
+        accent: color,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+        child: Column(
+          children: [
+            SizedBox(
+              width: 116,
+              height: 116,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: fraction.clamp(0.0, 1.0).toDouble()),
+                    duration: const Duration(milliseconds: 1400),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, v, _) =>
+                        CustomPaint(size: const Size(116, 116), painter: GaugePainter(v, color)),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, color: color, size: 16),
+                      const SizedBox(height: 2),
+                      Text(value,
+                          style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w800)),
+                      Text(unit, style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFooter() {
-    return const Center(
-      child: Column(
-        children: [
-          Text(
-            "WeerWi • Conçu pour lever toute confusion lors de la recherche du croissant de lune.",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38, fontSize: 11),
-          ),
-          SizedBox(height: 4),
-          Text(
-            "Données basées sur les éphémérides DE421 de la NASA et les prévisions Open-Meteo.",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white24, fontSize: 10),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Dessinateur de la lune
-class MoonPhasePainter extends CustomPainter {
-  final double illumination;
-
-  MoonPhasePainter({required this.illumination});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 4;
-
-    // Halo lumineux
-    final glowPaint = Paint()
-      ..color = const Color(0xFFFFD54F).withOpacity(0.18)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12);
-    canvas.drawCircle(center, radius + 4, glowPaint);
-
-    // Disque sombre de la lune (ombre)
-    final darkPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [const Color(0xFF1E2540), const Color(0xFF0F1322)],
-      ).createShader(Rect.fromCircle(center: center, radius: radius));
-    canvas.drawCircle(center, radius, darkPaint);
-
-    // Partie éclairée de la lune
-    if (illumination > 1) {
-      final brightPaint = Paint()
-        ..shader = RadialGradient(
-          colors: [const Color(0xFFFFF9C4), const Color(0xFFFFD54F)],
-        ).createShader(Rect.fromCircle(center: center, radius: radius));
-
-      // Arc de cercle éclairé
-      final path = Path();
-      path.addArc(Rect.fromCircle(center: center, radius: radius), -math.pi / 2, math.pi);
-      
-      // Facteur d'ellipse pour la phase
-      final phaseRatio = (illumination - 50.0) / 50.0;
-      final sweepDirection = phaseRatio >= 0;
-      final controlX = radius * phaseRatio.abs();
-
-      final ovalRect = Rect.fromCenter(
-        center: center,
-        width: controlX * 2,
-        height: radius * 2,
-      );
-
-      if (sweepDirection) {
-        path.arcTo(ovalRect, math.pi / 2, math.pi, false);
-      } else {
-        path.arcTo(ovalRect, math.pi / 2, -math.pi, false);
-      }
-      path.close();
-
-      canvas.drawPath(path, brightPaint);
-    }
-
-    // Bordure fine élégante
-    final strokePaint = Paint()
-      ..color = const Color(0xFFFFD54F).withOpacity(0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-    canvas.drawCircle(center, radius, strokePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant MoonPhasePainter oldDelegate) {
-    return oldDelegate.illumination != illumination;
-  }
-}
-
-// Ciel étoilé subtil
-class StarryBackground extends StatelessWidget {
-  const StarryBackground({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFF080B17), Color(0xFF0E1226), Color(0xFF090C1A)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+            const SizedBox(height: 8),
+            Text(label,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: color.withOpacity(0.9), fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.6)),
+          ],
         ),
       ),
     );
   }
+
+  Widget _errorCard() {
+    return _glass(
+      accent: Colors.redAccent,
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_tethering_error_rounded, color: Colors.redAccent),
+          const SizedBox(width: 12),
+          Expanded(child: Text(_error!, style: const TextStyle(color: Colors.white))),
+        ],
+      ),
+    );
+  }
+
+  Widget _footer() {
+    return Column(
+      children: [
+        Text('✦  ✦  ✦', style: TextStyle(color: kGold.withOpacity(0.5), letterSpacing: 6)),
+        const SizedBox(height: 8),
+        const Text(
+          'WeerWi — la science des astres au service de toute la communauté.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white38, fontSize: 11),
+        ),
+        const SizedBox(height: 3),
+        const Text(
+          'Éphémérides NASA JPL DE421 · Critères Danjon / Yallop · Météo Open-Meteo',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white24, fontSize: 10),
+        ),
+      ],
+    );
+  }
+
+  // ─────────────────────────── Helpers UI ───────────────────────────
+  Widget _sectionTitle(IconData? icon, String text, {Color color = kGold}) {
+    return Row(
+      children: [
+        if (icon != null) ...[Icon(icon, color: color, size: 16), const SizedBox(width: 8)],
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 2),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _glass({
+    required Widget child,
+    Color accent = Colors.white,
+    EdgeInsets padding = const EdgeInsets.all(20),
+  }) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFF181D48).withOpacity(0.72),
+            const Color(0xFF080A22).withOpacity(0.62),
+          ],
+        ),
+        border: Border.all(color: accent.withOpacity(0.25)),
+        boxShadow: [BoxShadow(color: accent.withOpacity(0.08), blurRadius: 30, spreadRadius: 1)],
+      ),
+      child: child,
+    );
+  }
+}
+
+// ═══════════════════════════ CIEL ANIMÉ ═══════════════════════════
+class _Star {
+  final double x, y, r, phase, speed, depth;
+  final bool band;
+  final Color color;
+  const _Star(this.x, this.y, this.r, this.phase, this.speed, this.depth, this.band, this.color);
+}
+
+class CosmicBackground extends StatefulWidget {
+  const CosmicBackground({super.key});
+
+  @override
+  State<CosmicBackground> createState() => _CosmicBackgroundState();
+}
+
+class _CosmicBackgroundState extends State<CosmicBackground> with SingleTickerProviderStateMixin {
+  late final AnimationController _ticker;
+  final Stopwatch _clock = Stopwatch()..start();
+  late final List<_Star> _stars;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat();
+    final rnd = math.Random(7);
+    const palette = [
+      Colors.white,
+      Color(0xFFCFE3FF),
+      Color(0xFFFFF1C9),
+      Color(0xFFBFD4FF),
+      Color(0xFFFFD6E8),
+    ];
+    _stars = [
+      // Étoiles dispersées
+      for (int i = 0; i < 260; i++)
+        () {
+          final depth = rnd.nextDouble();
+          return _Star(rnd.nextDouble(), rnd.nextDouble(), 0.4 + depth * depth * 1.9,
+              rnd.nextDouble() * math.pi * 2, 0.5 + rnd.nextDouble() * 2.5, depth, false,
+              palette[rnd.nextInt(palette.length)]);
+        }(),
+      // Voie lactée
+      for (int i = 0; i < 180; i++)
+        () {
+          final g = (rnd.nextDouble() + rnd.nextDouble() + rnd.nextDouble()) / 3 - 0.5; // ~gaussien
+          return _Star(rnd.nextDouble(), g, 0.3 + rnd.nextDouble() * 0.8, rnd.nextDouble() * math.pi * 2,
+              0.8 + rnd.nextDouble() * 2, rnd.nextDouble() * 0.6, true, palette[rnd.nextInt(palette.length)]);
+        }(),
+    ];
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _ticker,
+        builder: (context, _) => CustomPaint(
+          size: Size.infinite,
+          painter: SkyPainter(_clock.elapsedMilliseconds / 1000.0, _stars),
+        ),
+      ),
+    );
+  }
+}
+
+class SkyPainter extends CustomPainter {
+  final double t;
+  final List<_Star> stars;
+  SkyPainter(this.t, this.stars);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final rect = Offset.zero & size;
+
+    // Dégradé du ciel nocturne
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF01020A), Color(0xFF060A26), Color(0xFF120D38), Color(0xFF2B1542)],
+          stops: [0, 0.45, 0.8, 1],
+        ).createShader(rect),
+    );
+
+    // Nébuleuses
+    void nebula(double cx, double cy, double rad, Color c, double op) {
+      final center = Offset(cx, cy);
+      canvas.drawCircle(
+        center,
+        rad,
+        Paint()
+          ..shader = RadialGradient(colors: [c.withOpacity(op), c.withOpacity(0)])
+              .createShader(Rect.fromCircle(center: center, radius: rad)),
+      );
+    }
+
+    final m = math.max(w, h);
+    nebula(w * 0.12 + math.sin(t * 0.05) * 30, h * 0.22, m * 0.42, const Color(0xFF6B3FD9), 0.22);
+    nebula(w * 0.88, h * 0.12 + math.cos(t * 0.04) * 30, m * 0.32, const Color(0xFF1FA2C4), 0.16);
+    nebula(w * 0.72 + math.cos(t * 0.03) * 25, h * 0.62, m * 0.45, const Color(0xFFB0367A), 0.11);
+    nebula(w * 0.25, h * 0.88, m * 0.38, const Color(0xFF2D5BFF), 0.10);
+
+    // Voie lactée (bande diffuse)
+    const angle = -0.42;
+    canvas.save();
+    canvas.translate(w / 2, h * 0.42);
+    canvas.rotate(angle);
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset.zero, width: m * 1.9, height: h * 0.16),
+      Paint()
+        ..color = const Color(0xFFDCD6FF).withOpacity(0.06)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 50),
+    );
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset.zero, width: m * 1.5, height: h * 0.06),
+      Paint()
+        ..color = Colors.white.withOpacity(0.05)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 30),
+    );
+    canvas.restore();
+
+    // Étoiles scintillantes
+    final tanA = math.tan(angle);
+    for (final s in stars) {
+      double px, py;
+      if (s.band) {
+        px = (s.x * 1.4 - 0.2) * w;
+        py = h * 0.42 + (px - w / 2) * tanA + s.y * h * 0.22;
+      } else {
+        px = ((s.x + t * 0.0012 * (0.2 + s.depth)) % 1.0) * w;
+        py = s.y * h;
+      }
+      final tw = 0.55 + 0.45 * math.sin(t * s.speed + s.phase);
+      final op = math.min(1.0, math.max(0.0, (0.25 + 0.75 * tw) * (0.35 + 0.65 * s.depth)));
+      final pos = Offset(px, py);
+      canvas.drawCircle(pos, s.r, Paint()..color = s.color.withOpacity(op));
+      if (s.r > 1.55) {
+        canvas.drawCircle(
+          pos,
+          s.r * 3.2,
+          Paint()
+            ..color = s.color.withOpacity(op * 0.28)
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+        );
+        final l = Paint()
+          ..color = s.color.withOpacity(op * 0.55)
+          ..strokeWidth = 0.6;
+        final len = s.r * 4.5 * tw;
+        canvas.drawLine(Offset(px - len, py), Offset(px + len, py), l);
+        canvas.drawLine(Offset(px, py - len), Offset(px, py + len), l);
+      }
+    }
+
+    // Étoiles filantes
+    _shootingStar(canvas, w, h, 5.5, 0);
+    _shootingStar(canvas, w, h, 9.0, 1000);
+  }
+
+  void _shootingStar(Canvas canvas, double w, double h, double cycle, int seedOffset) {
+    const dur = 1.3;
+    final k = (t / cycle).floor();
+    final local = t - k * cycle;
+    if (local > dur) return;
+    final rnd = math.Random(k + seedOffset);
+    final start = Offset(w * (0.3 + rnd.nextDouble() * 0.7), h * rnd.nextDouble() * 0.45);
+    final ang = math.pi * (0.72 + rnd.nextDouble() * 0.12);
+    final dir = Offset(math.cos(ang), math.sin(ang));
+    final prog = local / dur;
+    final head = start + dir * (prog * w * 0.4);
+    final fade = math.sin(prog * math.pi);
+    final tail = head - dir * (150 * fade + 10);
+    canvas.drawLine(
+      tail,
+      head,
+      Paint()
+        ..shader = ui.Gradient.linear(tail, head, [Colors.white.withOpacity(0), Colors.white.withOpacity(0.9 * fade)])
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawCircle(
+      head,
+      2.4,
+      Paint()
+        ..color = Colors.white.withOpacity(fade)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant SkyPainter old) => true;
+}
+
+// ═══════════════════════════ LUNE ═══════════════════════════
+class MoonPainter extends CustomPainter {
+  final double illumination;
+  final double glow;
+  MoonPainter({required this.illumination, required this.glow});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.shortestSide / 2 * 0.74;
+    final k = (illumination / 100).clamp(0.0, 1.0).toDouble();
+    final lit = 0.35 + 0.65 * k;
+
+    // Halo
+    final radii = [r * 1.95, r * 1.45, r * 1.15];
+    final ops = [0.10, 0.17, 0.25];
+    final cols = [kGold, kGold, Colors.white];
+    for (int i = 0; i < 3; i++) {
+      canvas.drawCircle(
+        c,
+        radii[i],
+        Paint()
+          ..shader = RadialGradient(colors: [
+            cols[i].withOpacity(ops[i] * glow * lit),
+            cols[i].withOpacity(0),
+          ]).createShader(Rect.fromCircle(center: c, radius: radii[i])),
+      );
+    }
+
+    // Face sombre (lumière cendrée)
+    final disc = Rect.fromCircle(center: c, radius: r);
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = const RadialGradient(
+          center: Alignment(-0.3, -0.3),
+          colors: [Color(0xFF2B3156), Color(0xFF0C0F25)],
+        ).createShader(disc),
+    );
+
+    // Partie éclairée (terminateur elliptique)
+    if (k > 0.005) {
+      final path = Path()..moveTo(c.dx, c.dy - r);
+      path.arcToPoint(Offset(c.dx, c.dy + r), radius: Radius.circular(r), clockwise: true);
+      final ex = math.max(0.5, r * (1 - 2 * k).abs());
+      path.arcToPoint(Offset(c.dx, c.dy - r), radius: Radius.elliptical(ex, r), clockwise: k > 0.5);
+      path.close();
+
+      canvas.drawPath(
+        path,
+        Paint()
+          ..shader = const RadialGradient(
+            center: Alignment(0.35, -0.25),
+            radius: 0.95,
+            colors: [Color(0xFFFFFCEE), Color(0xFFF4E6B8), Color(0xFFC9B784)],
+            stops: [0, 0.6, 1],
+          ).createShader(disc),
+      );
+
+      // Cratères
+      canvas.save();
+      canvas.clipPath(path);
+      const craters = [
+        [0.25, -0.30, 0.16], [-0.20, 0.15, 0.12], [0.35, 0.35, 0.10], [-0.05, -0.48, 0.08],
+        [0.08, 0.08, 0.07], [-0.42, -0.10, 0.09], [0.52, -0.05, 0.06], [0.15, 0.55, 0.07],
+      ];
+      for (final cr in craters) {
+        final cc = c + Offset(cr[0] * r, cr[1] * r);
+        canvas.drawCircle(cc, cr[2] * r, Paint()..color = const Color(0xFFAE9C6E).withOpacity(0.35));
+        canvas.drawCircle(
+          cc,
+          cr[2] * r,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1
+            ..color = Colors.white.withOpacity(0.18),
+        );
+      }
+      canvas.restore();
+    }
+
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = kGold.withOpacity(0.25),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant MoonPainter old) => true;
+}
+
+// ═══════════════════════════ ORBITES ═══════════════════════════
+class OrbitPainter extends CustomPainter {
+  final double progress;
+  OrbitPainter(this.progress);
+
+  void _orbit(Canvas canvas, Size size, double rot, double a, double b, Color color, double phase) {
+    final c = size.center(Offset.zero);
+    canvas.save();
+    canvas.translate(c.dx, c.dy);
+    canvas.rotate(rot);
+    canvas.drawOval(
+      Rect.fromCenter(center: Offset.zero, width: a * 2, height: b * 2),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = color.withOpacity(0.2),
+    );
+    final th = (progress + phase) * 2 * math.pi;
+    final p = Offset(a * math.cos(th), b * math.sin(th));
+    canvas.drawCircle(
+      p,
+      8,
+      Paint()
+        ..color = color.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawCircle(p, 2.6, Paint()..color = Colors.white);
+    canvas.restore();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    _orbit(canvas, size, -0.28, size.width * 0.47, size.height * 0.15, kCyan, 0);
+    _orbit(canvas, size, 0.35, size.width * 0.40, size.height * 0.11, kViolet, 0.5);
+  }
+
+  @override
+  bool shouldRepaint(covariant OrbitPainter old) => old.progress != progress;
+}
+
+// ═══════════════════════════ JAUGES ═══════════════════════════
+class GaugePainter extends CustomPainter {
+  final double fraction;
+  final Color color;
+  GaugePainter(this.fraction, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.shortestSide / 2 - 8;
+    const start = math.pi * 0.75;
+    const sweep = math.pi * 1.5;
+    final rect = Rect.fromCircle(center: c, radius: r);
+
+    canvas.drawArc(
+      rect,
+      start,
+      sweep,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 7
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withOpacity(0.07),
+    );
+
+    for (int i = 0; i <= 10; i++) {
+      final a = start + sweep * i / 10;
+      final dir = Offset(math.cos(a), math.sin(a));
+      canvas.drawLine(
+        c + dir * (r - 11),
+        c + dir * (r - 15),
+        Paint()
+          ..color = Colors.white.withOpacity(0.18)
+          ..strokeWidth = 1,
+      );
+    }
+
+    final f = fraction.clamp(0.0, 1.0).toDouble();
+    if (f <= 0) return;
+    canvas.drawArc(
+      rect,
+      start,
+      sweep * f,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 11
+        ..strokeCap = StrokeCap.round
+        ..color = color.withOpacity(0.35)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawArc(
+      rect,
+      start,
+      sweep * f,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 7
+        ..strokeCap = StrokeCap.round
+        ..shader = SweepGradient(
+          startAngle: 0,
+          endAngle: sweep,
+          colors: [color.withOpacity(0.45), color],
+          transform: const GradientRotation(start),
+        ).createShader(rect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant GaugePainter old) => old.fraction != fraction || old.color != color;
+}
+
+// ═══════════════════════════ HORIZON (dunes + mosquée) ═══════════════════════════
+class HorizonPainter extends CustomPainter {
+  const HorizonPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width, h = size.height;
+    final rect = Offset.zero & size;
+
+    // Lueur du crépuscule
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            const Color(0xFFFF7A3D).withOpacity(0.08),
+            const Color(0xFFFFB347).withOpacity(0.20),
+          ],
+        ).createShader(rect),
+    );
+
+    // Dunes arrière
+    final back = Path()..moveTo(0, h * 0.62);
+    for (double x = 0; x <= w; x += w / 60) {
+      back.lineTo(x, h * 0.62 + math.sin(x / w * math.pi * 3) * 12 + math.sin(x / w * math.pi * 8) * 5);
+    }
+    back
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+    canvas.drawPath(back, Paint()..color = const Color(0xFF0D0B24));
+
+    // Mosquée
+    final m = Paint()..color = const Color(0xFF05040F);
+    final bx = w * 0.78;
+    final base = h * 0.78;
+    canvas.drawRect(Rect.fromLTWH(bx - 58, base - 38, 116, 60), m);
+    canvas.drawArc(Rect.fromCircle(center: Offset(bx, base - 38), radius: 34), math.pi, math.pi, true, m);
+    canvas.drawArc(Rect.fromCircle(center: Offset(bx - 44, base - 38), radius: 13), math.pi, math.pi, true, m);
+    canvas.drawArc(Rect.fromCircle(center: Offset(bx + 44, base - 38), radius: 13), math.pi, math.pi, true, m);
+    canvas.drawRect(Rect.fromLTWH(bx - 1.5, base - 88, 3, 18), m);
+    for (final mx in [bx - 82, bx + 82]) {
+      canvas.drawRect(Rect.fromLTWH(mx - 6, base - 100, 12, 122), m);
+      canvas.drawRect(Rect.fromLTWH(mx - 9, base - 72, 18, 5), m);
+      final cone = Path()
+        ..moveTo(mx - 7, base - 100)
+        ..lineTo(mx, base - 124)
+        ..lineTo(mx + 7, base - 100)
+        ..close();
+      canvas.drawPath(cone, m);
+    }
+    // Petit croissant doré au sommet du dôme
+    final crescent = Path.combine(
+      PathOperation.difference,
+      Path()..addOval(Rect.fromCircle(center: Offset(bx, base - 95), radius: 6)),
+      Path()..addOval(Rect.fromCircle(center: Offset(bx + 3, base - 97), radius: 5.2)),
+    );
+    canvas.drawPath(
+      crescent,
+      Paint()
+        ..color = kGold
+        ..maskFilter = const MaskFilter.blur(BlurStyle.solid, 2),
+    );
+
+    // Dunes avant
+    final front = Path()..moveTo(0, h * 0.82);
+    for (double x = 0; x <= w; x += w / 60) {
+      front.lineTo(x, h * 0.82 + math.sin(x / w * math.pi * 2 + 1) * 10 + math.sin(x / w * math.pi * 6) * 4);
+    }
+    front
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+    canvas.drawPath(front, Paint()..color = const Color(0xFF030309));
+  }
+
+  @override
+  bool shouldRepaint(covariant HorizonPainter old) => false;
 }
