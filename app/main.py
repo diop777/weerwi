@@ -1,199 +1,154 @@
+import asyncio
+import datetime as dt
 import os
-import math
-import ssl
-import datetime
 from typing import Optional
 
-import certifi
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import skyfield.iokit
-from skyfield.api import load, Topos
 
-# Assure SSL verification works on Windows
-skyfield.iokit.create_default_context = lambda *a, **k: ssl.create_default_context(cafile=certifi.where())
+import astro
 
 app = FastAPI(
-    title="WeerWi API & App",
-    description="API astronomique et météo pour le suivi lunaire en Afrique de l'Ouest",
-    version="1.1.0"
+    title="WeerWi API",
+    description="Observatoire scientifique du croissant lunaire pour l'Afrique de l'Ouest "
+                "(NASA JPL DE421, critères Yallop & Odeh, météo Open-Meteo)",
+    version="2.0.0",
 )
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# Enable CORS for Flutter Web / Mobile apps
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ─────────────────────────── Météo (Open-Meteo, gratuit) ───────────────────────────
 
-# Ephemerides (lazy loaded on startup)
-ephem = None
-earth = None
-moon = None
-sun = None
-ts = None
+async def _clouds(client, lat, lon, utc_times):
+    """Couverture nuageuse (%) à chaque instant UTC 'YYYY-MM-DDTHH:MM' demandé (heure la plus proche)."""
+    today = dt.date.today()
+    dates = sorted({t[:10] for t in utc_times})
+    if not dates:
+        return {}
+    d0, d1 = dt.date.fromisoformat(dates[0]), dt.date.fromisoformat(dates[-1])
+    if d1 > today + dt.timedelta(days=15) or d0 < today - dt.timedelta(days=60):
+        return {}
+    try:
+        r = await client.get("https://api.open-meteo.com/v1/forecast", params={
+            "latitude": lat, "longitude": lon, "hourly": "cloud_cover,cloud_cover_low",
+            "start_date": d0.isoformat(), "end_date": d1.isoformat(), "timezone": "GMT",
+        }, timeout=8)
+        if r.status_code != 200:
+            return {}
+        h = r.json().get("hourly", {})
+        series = dict(zip(h.get("time", []), zip(h.get("cloud_cover", []), h.get("cloud_cover_low", []))))
+    except Exception:
+        return {}
+    out = {}
+    for t in utc_times:
+        d = dt.datetime.fromisoformat(t)
+        key = (d + dt.timedelta(minutes=30)).replace(minute=0).strftime("%Y-%m-%dT%H:00")
+        if key in series and series[key][0] is not None:
+            out[t] = {"total": series[key][0], "low": series[key][1]}
+    return out
 
-@app.on_event("startup")
-def load_ephemeris():
-    global ephem, earth, moon, sun, ts
-    ts = load.timescale()
-    ephemeris_path = os.path.join(os.path.dirname(__file__), 'de421.bsp')
-    if os.path.exists(ephemeris_path):
-        ephem = load(ephemeris_path)
-    else:
-        ephem = load('de421.bsp')
-    earth, moon, sun = ephem['earth'], ephem['moon'], ephem['sun']
+
+def _weather_note(cloud):
+    if cloud is None:
+        return "Prévision météo indisponible pour cette date (au-delà de 15 jours ou dans le passé)."
+    c = cloud["total"]
+    if c < 20:
+        return f"Ciel dégagé au coucher du Soleil ({c:.0f} % de nuages)."
+    if c < 50:
+        return f"Quelques nuages au coucher du Soleil ({c:.0f} %) : horizon ouest probablement exploitable."
+    if c < 80:
+        return f"Ciel nuageux au coucher du Soleil ({c:.0f} %) : l'observation risque d'être gênée."
+    return f"Ciel couvert au coucher du Soleil ({c:.0f} %) : observation très compromise."
+
+# ─────────────────────────── Modèles ───────────────────────────
 
 class MoonRequest(BaseModel):
     latitude: float
     longitude: float
-    date: Optional[str] = None  # Accepts "YYYY-MM-DD" or None for today
+    date: Optional[str] = None
+    utc_offset: Optional[float] = None
 
-class MoonResponse(BaseModel):
-    date: str
-    phase: str
-    illumination: float
-    age_days: float
-    elongation_deg: float
-    altitude_deg: float
-    visible: bool
-    visibility_score: float
-    cloud_cover: Optional[float] = None
-    observation_tip: Optional[str] = None
-    ramadan_status: Optional[str] = None
 
-def compute_phase(lat: float, lon: float, target_date: datetime.date):
-    t = ts.utc(target_date.year, target_date.month, target_date.day)
-    loc = earth + Topos(latitude_degrees=lat, longitude_degrees=lon)
-    
-    # Altitude and azimuth of moon
-    alt = loc.at(t).observe(moon).apparent().altaz()[0].degrees
-    
-    # Apparent positions
-    e = earth.at(t)
-    moon_vec = e.observe(moon).apparent()
-    sun_vec = e.observe(sun).apparent()
-    elong = moon_vec.separation_from(sun_vec).degrees
-    
-    # Synodic month approximation (29.53 days)
-    age = (elong / 360.0) * 29.53
-    illumination = ((1 - math.cos(math.radians(elong))) / 2) * 100
-    
-    # Visibility criteria (Yallop / Danjon heuristic)
-    # Crescent visible if elongation > 7.5°, altitude above horizon > 0°, age > 0.6 day
-    visible = (age > 0.6) and (elong > 7.5) and (alt > 0)
-    score = min(1.0, max(0.0, (elong - 7.0) / 15.0 * (alt / 10.0 if alt > 0 else 0)))
-    
-    if age < 1:
-        phase = "Nouvelle lune (Conjonction)"
-    elif age < 7.4:
-        phase = "Premier croissant (Hilal)"
-    elif age < 14.8:
-        phase = "Premier quartier"
-    elif age < 22.1:
-        phase = "Lune gibbeuse croissante"
-    elif age < 23.5:
-        phase = "Pleine lune"
-    elif age < 28.0:
-        phase = "Lune gibbeuse décroissante"
-    else:
-        phase = "Dernier croissant"
-        
-    return phase, illumination, age, elong, alt, visible, score
+def _offset(off, lon):
+    return float(off) if off is not None else astro.default_offset(lon)
 
-async def fetch_weather(lat: float, lon: float, target_date: datetime.date):
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "hourly": "cloudcover",
-        "start_date": target_date.isoformat(),
-        "end_date": target_date.isoformat(),
-        "timezone": "UTC",
-    }
+
+def _parse_date(s):
+    if not s:
+        return dt.date.today()
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(url, params=params, timeout=8)
-            if resp.status_code == 200:
-                data = resp.json()
-                clouds = data.get("hourly", {}).get("cloudcover", [])
-                if clouds:
-                    # evening cloud cover (around sunset ~18h-20h UTC) is most critical
-                    evening_slice = clouds[17:21] if len(clouds) >= 21 else clouds
-                    return sum(evening_slice) / len(evening_slice)
-    except Exception:
-        pass
-    return None
+        return dt.date.fromisoformat(s.strip())
+    except ValueError:
+        raise HTTPException(400, "Format de date invalide (attendu : AAAA-MM-JJ).")
+
+# ─────────────────────────── Endpoints ───────────────────────────
 
 @app.get("/api/info")
 def api_info():
-    return {
-        "app": "WeerWi - Suivi Lunaire & Astronomie",
-        "status": "online",
-        "endpoints": {
-            "docs": "/docs",
-            "moon_post": "/moon"
-        },
-        "description": "Calculs astronomiques exacts de la lune et prévisions météo pour l'Afrique de l'Ouest"
-    }
+    return {"app": "WeerWi", "version": app.version, "status": "online",
+            "endpoints": ["/moon", "/month", "/hilal", "/hijri-month", "/cities", "/docs"]}
 
-@app.post("/moon", response_model=MoonResponse)
-async def get_moon(info: MoonRequest):
-    if info.date and info.date.strip():
-        try:
-            target = datetime.date.fromisoformat(info.date.strip())
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Format de date invalide. Utilisez YYYY-MM-DD.")
-    else:
-        target = datetime.date.today()
 
-    phase, illum, age, elong, alt, visible, score = compute_phase(info.latitude, info.longitude, target)
-    cloud = await fetch_weather(info.latitude, info.longitude, target)
-    
-    # Observation diagnostic
-    if visible:
-        if cloud is not None and cloud > 75:
-            tip = f"Le croissant est au-dessus de l'horizon, mais le ciel est très nuageux ({int(cloud)}%). Privilégiez un endroit dégagé ou des instruments optiques."
-        elif cloud is not None and cloud > 35:
-            tip = f"Croissant théoriquement visible ! Nuages partiels ({int(cloud)}%). Surveillez l'horizon ouest juste après le coucher du soleil."
-        else:
-            tip = "Excellentes conditions ! Ciel dégagé et croissant favorable pour une observation nette à l'œil nu à l'ouest."
-    else:
-        if alt <= 0:
-            tip = "La lune se couche avant ou avec le soleil. Impossible à observer ce soir-là (sous l'horizon)."
-        elif elong <= 7.5:
-            tip = "La lune est trop proche du disque solaire (élongation < 7.5°). Le croissant est noyé dans l'éclat du crépuscule (Limite de Danjon)."
-        else:
-            tip = "Croissant non visible à l'œil nu selon les critères astronomiques rigoureux."
+@app.get("/cities")
+def cities():
+    return astro.CITIES
 
-    # Statut Ramadan / Hilal
-    if "croissant" in phase.lower() or visible:
-        ramadan_status = "Nouveau mois lunaire visible (1er jour du mois dès le lendemain si observé au coucher)."
-    elif "nouvelle lune" in phase.lower() or age < 1.0:
-        ramadan_status = "Jour de conjonction astronomique (29e jour du mois : observation du croissant ce soir)."
-    else:
-        ramadan_status = f"Phase intermédiaire ({phase})."
 
-    return MoonResponse(
-        date=target.isoformat(),
-        phase=phase,
-        illumination=round(illum, 2),
-        age_days=round(age, 2),
-        elongation_deg=round(elong, 2),
-        altitude_deg=round(alt, 2),
-        visible=visible,
-        visibility_score=round(score, 2),
-        cloud_cover=round(cloud, 2) if cloud is not None else None,
-        observation_tip=tip,
-        ramadan_status=ramadan_status,
-    )
+@app.post("/moon")
+async def moon(req: MoonRequest):
+    """Rapport complet d'une soirée : présence de la Lune, croissant (Yallop/Odeh), météo."""
+    d = _parse_date(req.date)
+    off = _offset(req.utc_offset, req.longitude)
+    rep = await asyncio.to_thread(astro.evening_report, req.latitude, req.longitude, d, off)
+    async with httpx.AsyncClient() as client:
+        w = await _clouds(client, req.latitude, req.longitude, [rep["sunset_utc"]])
+    cloud = w.get(rep["sunset_utc"])
+    rep["cloud_cover"] = cloud["total"] if cloud else None
+    rep["cloud_cover_low"] = cloud["low"] if cloud else None
+    rep["weather_note"] = _weather_note(cloud)
+    if cloud and cloud["total"] >= 80 and rep["badge_level"] in ("good", "maybe"):
+        rep["observation_tip"] += " ⚠️ Attention : le ciel prévu est couvert, l'observation réelle sera difficile."
+    return rep
 
-# Mount Flutter Web app at root /
+
+@app.get("/month")
+async def month(lat: float, lon: float, year: int, month: int = Query(ge=1, le=12),
+                utc_offset: Optional[float] = None):
+    """Calendrier lunaire du mois : phase chaque jour, lever/coucher, présence, croissants."""
+    return await asyncio.to_thread(astro.month_calendar, lat, lon, _offset(utc_offset, lon), year, month)
+
+
+async def _with_weather(res):
+    async with httpx.AsyncClient() as client:
+        async def city_weather(c):
+            times = [e["sunset_utc"] for e in c["evenings"] if e.get("sunset_utc")]
+            w = await _clouds(client, c["lat"], c["lon"], times)
+            for e in c["evenings"]:
+                cl = w.get(e.get("sunset_utc"))
+                e["cloud_cover"] = cl["total"] if cl else None
+        await asyncio.gather(*(city_weather(c) for c in res["cities"]))
+    return res
+
+
+@app.get("/hilal")
+async def hilal(lat: float, lon: float, date: Optional[str] = None, utc_offset: Optional[float] = None):
+    """Prochaine nouvelle lune à partir d'une date : visibilité du croissant sur 3 soirées, toutes villes."""
+    res = await asyncio.to_thread(astro.hilal_analysis, lat, lon, _offset(utc_offset, lon), _parse_date(date))
+    return await _with_weather(res)
+
+
+@app.get("/hijri-month")
+async def hijri_month(lat: float, lon: float, month: int = Query(9, ge=1, le=12),
+                      utc_offset: Optional[float] = None, date: Optional[str] = None):
+    """Début d'un mois hégirien donné (9 = Ramadan, 10 = Chawwal/Aïd el-Fitr, 12 = Dhou al-Hijja)."""
+    res = await asyncio.to_thread(astro.hijri_month_analysis, lat, lon, _offset(utc_offset, lon), month,
+                                  _parse_date(date))
+    return await _with_weather(res)
+
+
+# Application Flutter Web servie à la racine
 web_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "flutter", "build", "web"))
 if os.path.exists(web_dir):
     app.mount("/", StaticFiles(directory=web_dir, html=True), name="static")

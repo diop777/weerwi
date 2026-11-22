@@ -1,7 +1,6 @@
 fastapi
 uvicorn[standard]
 skyfield
-astral
 httpx
 pydantic
-python-dotenv
+certifi
