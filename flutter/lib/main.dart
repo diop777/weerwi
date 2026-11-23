@@ -43,6 +43,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   City _city = kCities[0];
   int _tab = 0; // 0: Ce soir, 1: Calendrier, 2: Hilal & Ramadan
+  bool _phoneMode = true; // Téléphone virtuel Android actif par défaut sur grand écran
 
   // État Onglet 0 (Ce soir)
   DateTime _date = DateTime.now();
@@ -158,44 +159,301 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final screenW = MediaQuery.of(context).size.width;
+    final showPhoneFrame = _phoneMode && screenW > 540;
+
     return Scaffold(
       body: Stack(
         children: [
           const Positioned.fill(child: CosmicBackground()),
-          const Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 200,
-            child: IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
-          ),
+          if (!showPhoneFrame)
+            const Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: 200,
+              child: IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
+            ),
           SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(18, 14, 18, 210),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 960),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildHeader(),
-                      const SizedBox(height: 16),
-                      _buildCitySelector(),
-                      const SizedBox(height: 16),
-                      _buildNavigationTabs(),
-                      const SizedBox(height: 20),
-                      if (_tab == 0) _buildEveningTab(),
-                      if (_tab == 1) _buildCalendarTab(),
-                      if (_tab == 2) _buildHilalTab(),
-                      const SizedBox(height: 32),
-                      _buildFooter(),
-                    ],
-                  ),
+            child: Column(
+              children: [
+                if (screenW > 540) _buildSimulatorToolbar(),
+                Expanded(
+                  child: showPhoneFrame
+                      ? Center(child: _buildAndroidVirtualPhone())
+                      : _buildAppScrollContent(inPhone: false),
                 ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSimulatorToolbar() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      constraints: const BoxConstraints(maxWidth: 960),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E122E).withOpacity(0.85),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: kGold.withOpacity(0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.phone_android_rounded, color: kGold, size: 18),
+          const SizedBox(width: 8),
+          Text(
+            _phoneMode
+                ? 'Émulateur Mobile Android • Google Pixel 8 (Android 14)'
+                : 'Mode Observatoire Grand Écran',
+            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 16),
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => setState(() => _phoneMode = !_phoneMode),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [kGoldDeep, kGold]),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(_phoneMode ? Icons.fullscreen_rounded : Icons.smartphone_rounded,
+                      size: 15, color: kInk),
+                  const SizedBox(width: 6),
+                  Text(
+                    _phoneMode ? 'Plein écran' : 'Téléphone Virtuel',
+                    style: const TextStyle(color: kInk, fontSize: 11.5, fontWeight: FontWeight.w900),
+                  ),
+                ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAndroidVirtualPhone() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: 424,
+          height: 876,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Boutons physiques latéraux (Power & Volume)
+              Positioned(
+                right: 0,
+                top: 170,
+                child: Container(
+                  width: 4,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4A506A),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 0,
+                top: 238,
+                child: Container(
+                  width: 4,
+                  height: 86,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4A506A),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              // Châssis du smartphone Android
+              Container(
+                width: 414,
+                height: 876,
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(52),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF393E54), Color(0xFF171A26), Color(0xFF282C3E)],
+                  ),
+                  border: Border.all(color: Colors.white.withOpacity(0.28), width: 1.6),
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.75), blurRadius: 45, spreadRadius: 8),
+                    BoxShadow(color: kGold.withOpacity(0.14), blurRadius: 40, spreadRadius: 2),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(41),
+                  child: Container(
+                    color: kSpace,
+                    child: Stack(
+                      children: [
+                        const Positioned.fill(child: CosmicBackground()),
+                        const Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 58,
+                          height: 150,
+                          child: IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
+                        ),
+                        Column(
+                          children: [
+                            _buildAndroidStatusBar(),
+                            Expanded(child: _buildAppScrollContent(inPhone: true)),
+                            _buildAndroidBottomNav(),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAndroidStatusBar() {
+    final now = TimeOfDay.now();
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      color: Colors.black.withOpacity(0.28),
+      child: Row(
+        children: [
+          Text('$hh:$mm',
+              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+          const SizedBox(width: 6),
+          const Icon(Icons.nightlight_round, color: kGold, size: 12),
+          const Spacer(),
+          // Caméra frontale (punch-hole)
+          Container(
+            width: 13,
+            height: 13,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: const Color(0xFF05060C),
+              border: Border.all(color: Colors.white24, width: 0.8),
+            ),
+          ),
+          const Spacer(),
+          const Text('5G', style: TextStyle(color: Colors.white70, fontSize: 10, fontWeight: FontWeight.bold)),
+          const SizedBox(width: 5),
+          const Icon(Icons.signal_cellular_4_bar_rounded, color: Colors.white, size: 13),
+          const SizedBox(width: 5),
+          const Icon(Icons.wifi_rounded, color: Colors.white, size: 14),
+          const SizedBox(width: 5),
+          const Icon(Icons.battery_full_rounded, color: kGreen, size: 15),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAndroidBottomNav() {
+    final items = [
+      (0, Icons.nightlight_round, 'Ce soir'),
+      (1, Icons.calendar_month_rounded, 'Calendrier'),
+      (2, Icons.mosque_rounded, 'Hilal & Ramadan'),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0D22).withOpacity(0.96),
+        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.12))),
+      ),
+      padding: const EdgeInsets.only(top: 6, bottom: 6),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: items.map((item) {
+              final sel = _tab == item.$1;
+              return Expanded(
+                child: InkWell(
+                  onTap: () => setState(() => _tab = item.$1),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: sel ? kGold.withOpacity(0.22) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(item.$2, size: 20, color: sel ? kGold : Colors.white60),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        item.$3,
+                        style: TextStyle(
+                          color: sel ? kGold : Colors.white60,
+                          fontSize: 10.5,
+                          fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 6),
+          // Barre de navigation gestuelle Android
+          Container(
+            width: 115,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.45),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAppScrollContent({required bool inPhone}) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(inPhone ? 14 : 18, 12, inPhone ? 14 : 18, inPhone ? 28 : 210),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeader(),
+              const SizedBox(height: 14),
+              _buildCitySelector(),
+              if (!inPhone) ...[
+                const SizedBox(height: 16),
+                _buildNavigationTabs(),
+              ],
+              const SizedBox(height: 16),
+              if (_tab == 0) _buildEveningTab(),
+              if (_tab == 1) _buildCalendarTab(),
+              if (_tab == 2) _buildHilalTab(),
+              const SizedBox(height: 28),
+              _buildFooter(),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -205,16 +463,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Row(
       children: [
         Container(
-          width: 50,
-          height: 50,
+          width: 44,
+          height: 44,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: const RadialGradient(colors: [Color(0xFFFFF4C2), kGoldDeep]),
-            boxShadow: [BoxShadow(color: kGold.withOpacity(0.55), blurRadius: 22, spreadRadius: 1)],
+            boxShadow: [BoxShadow(color: kGold.withOpacity(0.55), blurRadius: 20, spreadRadius: 1)],
           ),
-          child: const Icon(Icons.nightlight_round, color: Color(0xFF14102A), size: 28),
+          child: const Icon(Icons.nightlight_round, color: Color(0xFF14102A), size: 24),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -224,18 +482,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: const Text(
                   'WeerWi',
                   style: TextStyle(
-                    fontSize: 32,
+                    fontSize: 26,
                     fontWeight: FontWeight.w900,
                     color: Colors.white,
-                    letterSpacing: 3,
+                    letterSpacing: 2.5,
                     height: 1.0,
                   ),
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               const Text(
-                'Votre astronaute personnel • Observatoire scientifique du Hilal',
-                style: TextStyle(color: Colors.white60, fontSize: 12, letterSpacing: 0.4),
+                'Astronaute personnel • Observatoire du Hilal',
+                style: TextStyle(color: Colors.white60, fontSize: 11, letterSpacing: 0.3),
               ),
             ],
           ),
@@ -243,7 +501,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         AnimatedBuilder(
           animation: _pulse,
           builder: (context, _) => Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.05),
               borderRadius: BorderRadius.circular(30),
@@ -253,8 +511,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 8,
-                  height: 8,
+                  width: 7,
+                  height: 7,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: kGreen,
@@ -263,10 +521,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 const Text(
-                  'NASA DE421 • EN ORBITE',
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.4, color: kGreen),
+                  'EN ORBITE',
+                  style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, letterSpacing: 1.2, color: kGreen),
                 ),
               ],
             ),
@@ -1365,14 +1623,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
                     children: [
-                      Expanded(
-                        child: Text(
-                          'Soir du ${e['date_label']}',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
-                        ),
+                      Text(
+                        'Soir du ${e['date_label']}',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14.5),
                       ),
                       Pill((e['verdict_text'] as String?) ?? '', col),
                     ],
@@ -1432,14 +1691,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 6,
                     children: [
-                      Text('${c['flag']} ', style: const TextStyle(fontSize: 16)),
-                      Expanded(
-                        child: Text(
-                          '${c['name']} (${c['country']})',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                        ),
+                      Text(
+                        '${c['flag']}  ${c['name']} (${c['country']})',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       Pill('1er jour (œil nu) : ${c['start_naked_eye_label']}', kGreen),
                     ],
