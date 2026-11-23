@@ -657,3 +657,125 @@ class HorizonPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant HorizonPainter old) => false;
 }
+
+
+// ═══════════════════════════ BOUSSOLE ASTRONOMIQUE DE VISÉE ═══════════════════════════
+class CompassPainter extends CustomPainter {
+  final double moonAz; // 0..360 (0=N, 90=E, 180=S, 270=O)
+  final double sunAz;
+  final double moonAlt;
+  CompassPainter({required this.moonAz, required this.sunAz, required this.moonAlt});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.shortestSide / 2 - 12;
+
+    // Cercle de fond
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [const Color(0xFF1A2152).withOpacity(0.9), const Color(0xFF0A0D24).withOpacity(0.95)],
+        ).createShader(Rect.fromCircle(center: c, radius: r)),
+    );
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = kGold.withOpacity(0.45),
+    );
+    canvas.drawCircle(
+      c,
+      r * 0.65,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8
+        ..color = Colors.white.withOpacity(0.12),
+    );
+
+    // Graduations tous les 15 degrés
+    for (int deg = 0; deg < 360; deg += 15) {
+      final a = (deg - 90) * math.pi / 180.0;
+      final dir = Offset(math.cos(a), math.sin(a));
+      final isMajor = deg % 90 == 0;
+      final isMid = deg % 45 == 0;
+      final len = isMajor ? 10.0 : (isMid ? 7.0 : 4.0);
+      canvas.drawLine(
+        c + dir * (r - len),
+        c + dir * r,
+        Paint()
+          ..color = isMajor ? kGold : Colors.white.withOpacity(0.28)
+          ..strokeWidth = isMajor ? 1.8 : 1.0,
+      );
+    }
+
+    // Points cardinaux N, E, S, O
+    const cardinals = [
+      ('N', -math.pi / 2, kCyan),
+      ('E', 0.0, Colors.white70),
+      ('S', math.pi / 2, Colors.white70),
+      ('O', math.pi, kGold),
+    ];
+    for (final item in cardinals) {
+      final pos = c + Offset(math.cos(item.$2), math.sin(item.$2)) * (r - 22);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: item.$1,
+          style: TextStyle(color: item.$3, fontSize: 12, fontWeight: FontWeight.w900),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, pos - Offset(tp.width / 2, tp.height / 2));
+    }
+
+    // Direction du Soleil au coucher
+    final sunRad = (sunAz - 90) * math.pi / 180.0;
+    final sunPos = c + Offset(math.cos(sunRad), math.sin(sunRad)) * (r * 0.76);
+    canvas.drawLine(
+      c,
+      sunPos,
+      Paint()
+        ..color = kOrange.withOpacity(0.45)
+        ..strokeWidth = 1.6,
+    );
+    canvas.drawCircle(
+      sunPos,
+      5,
+      Paint()
+        ..color = kOrange
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+    );
+
+    // Direction de la Lune (flèche lumineuse)
+    final moonRad = (moonAz - 90) * math.pi / 180.0;
+    final moonDir = Offset(math.cos(moonRad), math.sin(moonRad));
+    final moonTip = c + moonDir * (r * 0.82);
+    final arrowCol = moonAlt > 0 ? kGold : kRed;
+
+    canvas.drawLine(
+      c,
+      moonTip,
+      Paint()
+        ..color = arrowCol
+        ..strokeWidth = 3.0
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawCircle(
+      moonTip,
+      7,
+      Paint()
+        ..color = arrowCol.withOpacity(0.55)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+    canvas.drawCircle(moonTip, 4, Paint()..color = Colors.white);
+    canvas.drawCircle(c, 4, Paint()..color = kGold);
+  }
+
+  @override
+  bool shouldRepaint(covariant CompassPainter old) =>
+      old.moonAz != moonAz || old.sunAz != sunAz || old.moonAlt != moonAlt;
+}

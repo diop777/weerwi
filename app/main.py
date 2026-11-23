@@ -1,11 +1,13 @@
 import asyncio
 import datetime as dt
+import html
 import os
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -13,9 +15,9 @@ import astro
 
 app = FastAPI(
     title="WeerWi API",
-    description="Observatoire scientifique du croissant lunaire pour l'Afrique de l'Ouest "
+    description="Observatoire scientifique du croissant lunaire pour le Sénégal, l'Afrique de l'Ouest et le Monde "
                 "(NASA JPL DE421, critères Yallop & Odeh, météo Open-Meteo)",
-    version="2.0.0",
+    version="2.5.0",
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -87,8 +89,12 @@ def _parse_date(s):
 
 @app.get("/api/info")
 def api_info():
-    return {"app": "WeerWi", "version": app.version, "status": "online",
-            "endpoints": ["/moon", "/month", "/hilal", "/hijri-month", "/cities", "/docs"]}
+    return {
+        "app": "WeerWi",
+        "version": app.version,
+        "status": "online",
+        "endpoints": ["/moon", "/month", "/hilal", "/hijri-month", "/regions", "/countries", "/gps-locate", "/bulletin", "/cities", "/docs"],
+    }
 
 
 @app.get("/cities")
@@ -96,9 +102,57 @@ def cities():
     return astro.CITIES
 
 
+@app.get("/countries")
+def countries():
+    return [
+        {
+            "code": c["code"],
+            "name": c["name"],
+            "flag": c["flag"],
+            "tz": c["tz"],
+            "region_count": len(c["regions"]),
+            "locality_count": sum(len(r["localities"]) for r in c["regions"]),
+        }
+        for c in astro.COUNTRIES_CATALOG.values()
+    ]
+
+
+@app.get("/regions")
+async def regions(
+    country: str = Query("SN", description="Code pays (SN, ML, MR, CI, GN, BF, NE, WORLD)"),
+    date: Optional[str] = None,
+    hijri_month: int = Query(9, ge=0, le=12, description="Mois hégirien cible (9=Ramadan, 0=date libre)"),
+    day_offset: int = Query(-1, ge=-1, le=2, description="0=J0 conjonction, 1=J+1, 2=J+2, -1=auto"),
+):
+    """Scan complet de toutes les régions/villes d'un pays + Point Sentinelle le plus favorable."""
+    d = _parse_date(date)
+    return await asyncio.to_thread(astro.scan_country_regions, country, d, hijri_month, day_offset)
+
+
+@app.get("/gps-locate")
+async def gps_locate(lat: Optional[float] = None, lon: Optional[float] = None):
+    """Détecte la localité la plus proche des coordonnées GPS (ou géolocalisation IP en secours)."""
+    source = "gps"
+    if lat is None or lon is None:
+        source = "ip_fallback"
+        lat, lon = 14.6937, -17.4441  # Dakar par défaut
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.get("http://ip-api.com/json/?fields=status,lat,lon,city,country", timeout=5)
+                if r.status_code == 200:
+                    j = r.json()
+                    if j.get("status") == "success" and j.get("lat") is not None:
+                        lat, lon = float(j["lat"]), float(j["lon"])
+        except Exception:
+            pass
+    info = await asyncio.to_thread(astro.nearest_locality, lat, lon)
+    info["source"] = source
+    return info
+
+
 @app.post("/moon")
 async def moon(req: MoonRequest):
-    """Rapport complet d'une soirée : présence de la Lune, croissant (Yallop/Odeh), météo."""
+    """Rapport complet d'une soirée : présence de la Lune, croissant (Yallop/Odeh), boussole, turbulence, météo."""
     d = _parse_date(req.date)
     off = _offset(req.utc_offset, req.longitude)
     rep = await asyncio.to_thread(astro.evening_report, req.latitude, req.longitude, d, off)
@@ -146,6 +200,115 @@ async def hijri_month(lat: float, lon: float, month: int = Query(9, ge=1, le=12)
     res = await asyncio.to_thread(astro.hijri_month_analysis, lat, lon, _offset(utc_offset, lon), month,
                                   _parse_date(date))
     return await _with_weather(res)
+
+
+@app.get("/bulletin", response_class=HTMLResponse)
+async def bulletin(
+    city: str = Query("Dakar"),
+    country: str = Query("Sénégal"),
+    country_code: str = Query("SN"),
+    lat: float = Query(14.6937),
+    lon: float = Query(-17.4441),
+    utc_offset: float = Query(0),
+    date: Optional[str] = None,
+    hijri_month: int = Query(9, ge=0, le=12),
+):
+    """Génère un Bulletin Scientifique Officiel imprimable / enregistrable en PDF."""
+    d = _parse_date(date)
+    rep = await asyncio.to_thread(astro.evening_report, lat, lon, d, utc_offset)
+    reg = await asyncio.to_thread(astro.scan_country_regions, country_code, d, hijri_month, -1)
+    sen = reg["sentinel"]
+
+    rows_html = ""
+    for r in reg["regions"]:
+        locs_txt = ", ".join(
+            f"<b>{html.escape(l['name'])}</b> ({html.escape(l['verdict_text'])}"
+            + (f", V={l['odeh_v']}" if l['odeh_v'] is not None else "") + ")"
+            for l in r["localities"]
+        )
+        rows_html += f"""
+        <tr>
+          <td><b>{html.escape(r['region'])}</b></td>
+          <td>{html.escape(r['best_locality'])}</td>
+          <td><b>{html.escape(r['verdict_text'])}</b></td>
+          <td style="font-size:12px">{locs_txt}</td>
+        </tr>"""
+
+    doc = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Bulletin Astronomique Officiel WeerWi - {html.escape(city)}</title>
+<style>
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; color: #141829; margin: 28px; line-height: 1.5; }}
+  .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #D4A017; padding-bottom: 14px; }}
+  .title {{ font-size: 24px; font-weight: 900; color: #0E1330; }}
+  .subtitle {{ font-size: 13px; color: #555; }}
+  .btn {{ background: #D4A017; color: #0E1330; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 800; cursor: pointer; }}
+  .box {{ background: #F7F8FC; border-left: 5px solid #D4A017; padding: 14px 18px; margin: 16px 0; border-radius: 6px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }}
+  .metric {{ border: 1px solid #DDE2F0; border-radius: 8px; padding: 10px; background: #FFF; }}
+  .metric .k {{ font-size: 11px; color: #666; text-transform: uppercase; }}
+  .metric .v {{ font-size: 16px; font-weight: 800; color: #0E1330; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }}
+  th, td {{ border: 1px solid #D5DAE8; padding: 8px 10px; text-align: left; vertical-align: top; }}
+  th {{ background: #0E1330; color: #FFD872; }}
+  @media print {{ .no-print {{ display: none; }} body {{ margin: 10px; }} }}
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="title">🌙 WEERWI • BULLETIN ASTRONOMIQUE OFFICIEL</div>
+      <div class="subtitle">Observatoire Scientifique du Hilal • Éphémérides NASA JPL DE421 • Critères de Yallop (1997) & Odeh (2004)</div>
+    </div>
+    <button class="btn no-print" onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  </div>
+
+  <div class="box">
+    <b>Localité de référence :</b> {html.escape(city)} ({html.escape(country)}) — Lat {lat:.4f}°, Lon {lon:.4f}° (UTC{utc_offset:+.0f})<br>
+    <b>Soirée analysée :</b> {html.escape(rep['date_label'])} &nbsp;|&nbsp; <b>Verdict :</b> {html.escape(rep['badge_text'])}<br>
+    <b>Synthèse de l'astronaute :</b> {html.escape(rep['observation_tip'])}<br>
+    <b>Contexte lunaire :</b> {html.escape(rep['ramadan_status'])}
+  </div>
+
+  <div class="grid">
+    <div class="metric"><div class="k">Phase & Illumination</div><div class="v">{html.escape(rep['phase'])} ({rep['illumination']} %)</div></div>
+    <div class="metric"><div class="k">Coucher Soleil / Lune</div><div class="v">{rep['sunset']} / {rep['moonset'] or '—'} (Lag: {rep['lag_minutes']} min)</div></div>
+    <div class="metric"><div class="k">Âge depuis conjonction</div><div class="v">{rep['age_hours']} h ({rep['age_days']} j)</div></div>
+    <div class="metric"><div class="k">Azimut & Direction</div><div class="v">{rep['moon_azimuth_deg']}° ({rep['cardinal_direction']})</div></div>
+    <div class="metric"><div class="k">Hauteur & Élongation</div><div class="v">Alt {rep['altitude_deg']}° / Élong {rep['elongation_deg']}°</div></div>
+    <div class="metric"><div class="k">Turbulence & Masse d'air</div><div class="v">{html.escape(rep['turbulence_level'])} ({rep['airmass'] or '—'}×)</div></div>
+  </div>
+
+  <h3>🏆 Point Sentinelle & Bilan Régional — {html.escape(reg['country_name'])} ({html.escape(reg['date_label'])})</h3>
+  <div class="box">
+    <b>{html.escape(reg['rule_title'])}</b><br>
+    <b>Point Sentinelle (Lieu le plus favorable du pays) :</b> {html.escape(sen['name'])} (Région de {html.escape(sen['region'])}) —
+    Coucher Soleil {sen['sunset']}, Coucher Lune {sen['moonset']}, Indice Odeh V = {sen['odeh_v'] if sen['odeh_v'] is not None else '—'}, Yallop = {sen['yallop_code']}<br>
+    {html.escape(reg['rule_text'])}
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Région</th>
+        <th>Point le plus favorable</th>
+        <th>Verdict régional</th>
+        <th>Détail des départements, villes et foyers religieux</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+
+  <p style="font-size:11px; color:#666; margin-top:20px; text-align:center;">
+    Document généré scientifiquement par WeerWi — Éphémérides NASA JPL DE421 · Critères astronomiques internationaux de Yallop et d'Odeh.
+  </p>
+</body>
+</html>"""
+    return HTMLResponse(content=doc)
 
 
 # Application Flutter Web servie à la racine

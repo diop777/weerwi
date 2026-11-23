@@ -349,6 +349,29 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
     else:
         score = 1.0 if visible else 0.0
 
+    # Direction cardinale & turbulence atmosphérique (masse d'air près de l'horizon)
+    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
+    cardinal = dirs[int(((g["moon_az"] + 11.25) % 360) / 22.5)]
+    alt_deg = g["moon_alt"]
+    if alt_deg <= 0:
+        airmass = None
+        turb_level = "Sous l'horizon"
+        turb_note = "La Lune est sous l'horizon au coucher du Soleil : aucune lumière directe n'atteint l'observateur."
+    else:
+        # Formule de Kasten & Young (1989) pour la masse d'air atmosphérique
+        airmass = round(1.0 / (math.sin(math.radians(alt_deg)) + 0.50572 * ((alt_deg + 6.07995) ** -1.6364)), 2)
+        if alt_deg < 6:
+            turb_level = "Forte turbulence d'horizon"
+            turb_note = (f"Masse d'air élevée ({airmass}×) à {alt_deg:.1f}° de hauteur : forte absorption, brume, "
+                         f"poussière (Harmattan) et scintillation près de l'horizon. Un horizon ouest parfaitement dégagé est indispensable.")
+        elif alt_deg < 15:
+            turb_level = "Turbulence modérée"
+            turb_note = (f"Masse d'air modérée ({airmass}×) à {alt_deg:.1f}° de hauteur : transparence atmosphérique "
+                         f"correcte si l'horizon ouest est sans poussière ni brume.")
+        else:
+            turb_level = "Atmosphère stable (faible extinction)"
+            turb_note = f"Masse d'air faible ({airmass}×) à {alt_deg:.1f}° de hauteur : très peu de turbulence atmosphérique."
+
     return {
         "date": d.isoformat(),
         "date_label": fr_date(d),
@@ -370,6 +393,12 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
         "elongation_deg": round(g["arcl"], 2),
         "altitude_deg": round(g["moon_alt"], 2),
         "moon_azimuth_deg": round(g["moon_az"], 1),
+        "sun_azimuth_deg": round(g["sun_az"], 1),
+        "daz_deg": round(g["daz"], 1),
+        "cardinal_direction": cardinal,
+        "airmass": airmass,
+        "turbulence_level": turb_level,
+        "turbulence_note": turb_note,
         "present_tonight": present_tonight,
         "moon_presence": presence,
         "crescent": _clean_crescent(crescent, off),
@@ -506,3 +535,387 @@ def hijri_month_analysis(lat, lon, off, target_month: int, from_date: dt.date):
         if m == target_month:
             return hilal_from_new_moon(nm, lat, lon, off)
     raise ValueError("Mois introuvable")
+
+
+# ─────────────────────────── 14 Régions du Sénégal & Pays (Afrique de l'Ouest & Monde) ───────────────────────────
+
+COUNTRIES_CATALOG = {
+    "SN": {
+        "code": "SN",
+        "name": "Sénégal (14 Régions)",
+        "flag": "🇸🇳",
+        "tz": 0,
+        "regions": [
+            {"region": "Dakar", "localities": [
+                {"name": "Dakar (Pointe des Almadies)", "type": "Cap le plus à l'Ouest", "lat": 14.7442, "lon": -17.5293},
+                {"name": "Dakar Plateau", "type": "Capitale", "lat": 14.6937, "lon": -17.4441},
+                {"name": "Pikine", "type": "Département", "lat": 14.7546, "lon": -17.3907},
+                {"name": "Guédiawaye", "type": "Département", "lat": 14.7761, "lon": -17.3964},
+                {"name": "Rufisque", "type": "Département", "lat": 14.7153, "lon": -17.2733},
+            ]},
+            {"region": "Thiès", "localities": [
+                {"name": "Thiès", "type": "Chef-lieu", "lat": 14.7886, "lon": -16.9260},
+                {"name": "Tivaouane", "type": "Cité religieuse & Département", "lat": 14.9514, "lon": -16.8189},
+                {"name": "Mbour", "type": "Département côtier", "lat": 14.4167, "lon": -16.9667},
+                {"name": "Ndiassane", "type": "Foyer religieux", "lat": 14.8350, "lon": -16.8450},
+                {"name": "Joal-Fadiouth", "type": "Commune côtière", "lat": 14.1667, "lon": -16.8333},
+            ]},
+            {"region": "Diourbel", "localities": [
+                {"name": "Touba", "type": "Cité religieuse", "lat": 14.8647, "lon": -15.8756},
+                {"name": "Diourbel", "type": "Chef-lieu", "lat": 14.6550, "lon": -16.2314},
+                {"name": "Mbacké", "type": "Département", "lat": 14.7903, "lon": -15.9086},
+                {"name": "Bambey", "type": "Département", "lat": 14.6989, "lon": -16.4533},
+            ]},
+            {"region": "Saint-Louis", "localities": [
+                {"name": "Saint-Louis (Ndar)", "type": "Chef-lieu côtier", "lat": 16.0179, "lon": -16.4896},
+                {"name": "Richard-Toll", "type": "Commune", "lat": 16.4625, "lon": -15.7008},
+                {"name": "Dagana", "type": "Département", "lat": 16.5167, "lon": -15.5000},
+                {"name": "Podor", "type": "Département", "lat": 16.6528, "lon": -14.9589},
+            ]},
+            {"region": "Louga", "localities": [
+                {"name": "Louga", "type": "Chef-lieu", "lat": 15.6186, "lon": -16.2244},
+                {"name": "Kébémer", "type": "Département", "lat": 15.3667, "lon": -16.4333},
+                {"name": "Linguère", "type": "Département", "lat": 15.3953, "lon": -15.1192},
+                {"name": "Dahra Djolof", "type": "Commune", "lat": 15.3483, "lon": -15.4792},
+            ]},
+            {"region": "Kaolack", "localities": [
+                {"name": "Kaolack (Médina Baye)", "type": "Chef-lieu & Cité religieuse", "lat": 14.1520, "lon": -16.0726},
+                {"name": "Nioro du Rip", "type": "Département", "lat": 13.7500, "lon": -15.7833},
+                {"name": "Guinguinéo", "type": "Département", "lat": 14.2667, "lon": -15.9500},
+            ]},
+            {"region": "Fatick", "localities": [
+                {"name": "Fatick", "type": "Chef-lieu", "lat": 14.3390, "lon": -16.4111},
+                {"name": "Foundiougne", "type": "Département", "lat": 14.1333, "lon": -16.4667},
+                {"name": "Gossas", "type": "Département", "lat": 14.4833, "lon": -16.0667},
+                {"name": "Sokone", "type": "Commune", "lat": 13.8833, "lon": -16.3667},
+            ]},
+            {"region": "Kaffrine", "localities": [
+                {"name": "Kaffrine", "type": "Chef-lieu", "lat": 14.1059, "lon": -15.5508},
+                {"name": "Birkelane", "type": "Département", "lat": 14.1333, "lon": -15.7500},
+                {"name": "Koungheul", "type": "Département", "lat": 13.9833, "lon": -14.8000},
+                {"name": "Malem-Hodar", "type": "Département", "lat": 14.0886, "lon": -15.2914},
+            ]},
+            {"region": "Matam", "localities": [
+                {"name": "Matam", "type": "Chef-lieu", "lat": 15.6559, "lon": -13.2554},
+                {"name": "Ourossogui", "type": "Commune", "lat": 15.6058, "lon": -13.3214},
+                {"name": "Kanel", "type": "Département", "lat": 15.4917, "lon": -13.1764},
+                {"name": "Ranérou", "type": "Département", "lat": 15.3000, "lon": -13.9667},
+            ]},
+            {"region": "Tambacounda", "localities": [
+                {"name": "Tambacounda", "type": "Chef-lieu", "lat": 13.7707, "lon": -13.6673},
+                {"name": "Bakel", "type": "Département", "lat": 14.9019, "lon": -12.4583},
+                {"name": "Koumpentoum", "type": "Département", "lat": 13.9833, "lon": -14.5500},
+                {"name": "Goudiry", "type": "Département", "lat": 14.1833, "lon": -12.7167},
+            ]},
+            {"region": "Kédougou", "localities": [
+                {"name": "Kédougou", "type": "Chef-lieu", "lat": 12.5579, "lon": -12.1743},
+                {"name": "Saraya", "type": "Département", "lat": 12.8322, "lon": -11.7539},
+                {"name": "Salémata", "type": "Département", "lat": 12.6300, "lon": -12.8150},
+            ]},
+            {"region": "Kolda", "localities": [
+                {"name": "Kolda", "type": "Chef-lieu", "lat": 12.8939, "lon": -14.9412},
+                {"name": "Vélingara", "type": "Département", "lat": 13.1500, "lon": -14.1167},
+                {"name": "Médina Yoro Foulah", "type": "Département", "lat": 13.3100, "lon": -14.7167},
+            ]},
+            {"region": "Sédhiou", "localities": [
+                {"name": "Sédhiou", "type": "Chef-lieu", "lat": 12.7081, "lon": -15.5569},
+                {"name": "Bounkiling", "type": "Département", "lat": 13.0375, "lon": -15.6964},
+                {"name": "Goudomp", "type": "Département", "lat": 12.5778, "lon": -15.8722},
+            ]},
+            {"region": "Ziguinchor", "localities": [
+                {"name": "Cap Skirring", "type": "Pointe Sud-Ouest côtière", "lat": 12.3894, "lon": -16.7422},
+                {"name": "Ziguinchor", "type": "Chef-lieu", "lat": 12.5681, "lon": -16.2719},
+                {"name": "Bignona", "type": "Département", "lat": 12.8103, "lon": -16.2264},
+                {"name": "Oussouye", "type": "Département", "lat": 12.4850, "lon": -16.5469},
+            ]},
+        ],
+    },
+    "ML": {
+        "code": "ML", "name": "Mali", "flag": "🇲🇱", "tz": 0,
+        "regions": [
+            {"region": "Ouest & Kayes", "localities": [
+                {"name": "Kayes", "type": "Chef-lieu", "lat": 14.4469, "lon": -11.4445},
+                {"name": "Nioro du Sahel", "type": "Cité religieuse", "lat": 15.2281, "lon": -9.5767},
+                {"name": "Kita", "type": "Cercle", "lat": 13.0349, "lon": -9.4895},
+            ]},
+            {"region": "Bamako & Centre", "localities": [
+                {"name": "Bamako", "type": "Capitale", "lat": 12.6392, "lon": -8.0029},
+                {"name": "Ségou", "type": "Chef-lieu", "lat": 13.4317, "lon": -6.2157},
+                {"name": "Sikasso", "type": "Chef-lieu Sud", "lat": 11.3176, "lon": -5.6665},
+                {"name": "Mopti", "type": "Chef-lieu", "lat": 14.4843, "lon": -4.1829},
+            ]},
+            {"region": "Nord & Est", "localities": [
+                {"name": "Tombouctou", "type": "Cité historique", "lat": 16.7666, "lon": -3.0026},
+                {"name": "Gao", "type": "Chef-lieu", "lat": 16.2717, "lon": -0.0447},
+                {"name": "Kidal", "type": "Chef-lieu", "lat": 18.4411, "lon": 1.4078},
+            ]},
+        ],
+    },
+    "MR": {
+        "code": "MR", "name": "Mauritanie", "flag": "🇲🇷", "tz": 0,
+        "regions": [
+            {"region": "Littoral & Fleuve", "localities": [
+                {"name": "Nouadhibou", "type": "Cap Blanc (Ouest)", "lat": 20.9310, "lon": -17.0347},
+                {"name": "Nouakchott", "type": "Capitale", "lat": 18.0735, "lon": -15.9582},
+                {"name": "Rosso", "type": "Trarza", "lat": 16.5138, "lon": -15.8050},
+                {"name": "Kaédi", "type": "Gorgol", "lat": 16.1503, "lon": -13.5037},
+            ]},
+            {"region": "Intérieur & Est", "localities": [
+                {"name": "Atar", "type": "Adrar", "lat": 20.5169, "lon": -13.0499},
+                {"name": "Kiffa", "type": "Assaba", "lat": 16.6207, "lon": -11.4021},
+                {"name": "Néma", "type": "Hodh Ech Chargui", "lat": 16.6170, "lon": -7.2535},
+            ]},
+        ],
+    },
+    "CI": {
+        "code": "CI", "name": "Côte d'Ivoire", "flag": "🇨🇮", "tz": 0,
+        "regions": [
+            {"region": "Sud & Littoral", "localities": [
+                {"name": "San-Pédro", "type": "Sud-Ouest côtier", "lat": 4.7485, "lon": -6.6363},
+                {"name": "Abidjan", "type": "Métropole", "lat": 5.3600, "lon": -4.0083},
+                {"name": "Yamoussoukro", "type": "Capitale", "lat": 6.8276, "lon": -5.2893},
+            ]},
+            {"region": "Centre, Ouest & Nord", "localities": [
+                {"name": "Man", "type": "Montagnes (Ouest)", "lat": 7.4125, "lon": -7.5538},
+                {"name": "Odienné", "type": "Kabadougou (Nord-Ouest)", "lat": 9.5051, "lon": -7.5643},
+                {"name": "Bouaké", "type": "Gbêkê", "lat": 7.6939, "lon": -5.0303},
+                {"name": "Korhogo", "type": "Poro (Nord)", "lat": 9.4580, "lon": -5.6296},
+            ]},
+        ],
+    },
+    "GN": {
+        "code": "GN", "name": "Guinée", "flag": "🇬🇳", "tz": 0,
+        "regions": [
+            {"region": "Basse-Guinée & Fouta", "localities": [
+                {"name": "Conakry", "type": "Capitale côtière", "lat": 9.6412, "lon": -13.5784},
+                {"name": "Boké", "type": "Nord-Ouest", "lat": 10.9409, "lon": -14.2967},
+                {"name": "Kindia", "type": "Chef-lieu", "lat": 10.0569, "lon": -12.8658},
+                {"name": "Labé", "type": "Fouta-Djalon", "lat": 11.3182, "lon": -12.2833},
+            ]},
+            {"region": "Haute-Guinée & Forêt", "localities": [
+                {"name": "Kankan", "type": "Chef-lieu", "lat": 10.3854, "lon": -9.3057},
+                {"name": "Nzérékoré", "type": "Guinée forestière", "lat": 7.7562, "lon": -8.8179},
+            ]},
+        ],
+    },
+    "BF": {
+        "code": "BF", "name": "Burkina Faso", "flag": "🇧🇫", "tz": 0,
+        "regions": [
+            {"region": "Ouest & Centre", "localities": [
+                {"name": "Banfora", "type": "Cascades (Sud-Ouest)", "lat": 10.6333, "lon": -4.7667},
+                {"name": "Bobo-Dioulasso", "type": "Hauts-Bassins", "lat": 11.1771, "lon": -4.2979},
+                {"name": "Ouagadougou", "type": "Capitale", "lat": 12.3714, "lon": -1.5197},
+                {"name": "Ouahigouya", "type": "Nord", "lat": 13.5828, "lon": -2.4216},
+                {"name": "Dori", "type": "Sahel (Est)", "lat": 14.0354, "lon": -0.0345},
+            ]},
+        ],
+    },
+    "NE": {
+        "code": "NE", "name": "Niger", "flag": "🇳🇪", "tz": 1,
+        "regions": [
+            {"region": "Ouest, Centre & Est", "localities": [
+                {"name": "Niamey", "type": "Capitale (Ouest)", "lat": 13.5116, "lon": 2.1254},
+                {"name": "Dosso", "type": "Sud-Ouest", "lat": 13.0490, "lon": 3.1937},
+                {"name": "Tahoua", "type": "Centre", "lat": 14.8888, "lon": 5.2692},
+                {"name": "Maradi", "type": "Sud-Centre", "lat": 13.5000, "lon": 7.1017},
+                {"name": "Agadez", "type": "Aïr (Nord)", "lat": 16.9733, "lon": 7.9911},
+                {"name": "Zinder", "type": "Damagaram", "lat": 13.8069, "lon": 8.9881},
+                {"name": "Diffa", "type": "Extrême-Est", "lat": 13.3154, "lon": 12.6113},
+            ]},
+        ],
+    },
+    "WORLD": {
+        "code": "WORLD", "name": "Monde & Lieux Saints", "flag": "🌍", "tz": 0,
+        "regions": [
+            {"region": "Lieux Saints & Monde Arabe", "localities": [
+                {"name": "La Mecque (Makkah)", "type": "Arabie Saoudite 🇸🇦", "lat": 21.4225, "lon": 39.8262, "tz": 3},
+                {"name": "Médine (Al-Madinah)", "type": "Arabie Saoudite 🇸🇦", "lat": 24.4672, "lon": 39.6112, "tz": 3},
+                {"name": "Rabat", "type": "Maroc 🇲🇦", "lat": 34.0209, "lon": -6.8416, "tz": 1},
+                {"name": "Casablanca", "type": "Maroc 🇲🇦", "lat": 33.5731, "lon": -7.5898, "tz": 1},
+                {"name": "Alger", "type": "Algérie 🇩🇿", "lat": 36.7538, "lon": 3.0588, "tz": 1},
+                {"name": "Tunis", "type": "Tunisie 🇹🇳", "lat": 36.8065, "lon": 10.1815, "tz": 1},
+                {"name": "Le Caire", "type": "Égypte 🇪🇬", "lat": 30.0444, "lon": 31.2357, "tz": 2},
+                {"name": "Istanbul", "type": "Turquie 🇹🇷", "lat": 41.0082, "lon": 28.9784, "tz": 3},
+            ]},
+            {"region": "Europe, Amériques & Asie", "localities": [
+                {"name": "Dakar", "type": "Sénégal 🇸🇳", "lat": 14.6937, "lon": -17.4441, "tz": 0},
+                {"name": "Paris", "type": "France 🇫🇷", "lat": 48.8566, "lon": 2.3522, "tz": 1},
+                {"name": "Londres", "type": "Royaume-Uni 🇬🇧", "lat": 51.5072, "lon": -0.1276, "tz": 0},
+                {"name": "New York", "type": "États-Unis 🇺🇸", "lat": 40.7128, "lon": -74.0060, "tz": -5},
+                {"name": "Jakarta", "type": "Indonésie 🇮🇩", "lat": -6.2088, "lon": 106.8456, "tz": 7},
+            ]},
+        ],
+    },
+}
+
+
+def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, day_offset: int = -1) -> dict:
+    """
+    Analyse complète de toutes les régions/villes d'un pays.
+    - Si hijri_month in 1..12 : cible la conjonction de ce mois hégirien (ex: 9 = Ramadan).
+    - Si day_offset in (0, 1, 2) : choisit le soir J+day_offset après la conjonction.
+    """
+    cat = COUNTRIES_CATALOG.get(country_code.upper(), COUNTRIES_CATALOG["SN"])
+    default_tz = cat["tz"]
+
+    if 1 <= hijri_month <= 12:
+        t0 = local_to_t(d - dt.timedelta(days=27), 0, default_tz)
+        nm = None
+        for cand in new_moons_between(t0, shift(t0, 420)):
+            _, m, _ = month_starting_after(t_to_local(cand, default_tz).date())
+            if m == hijri_month:
+                nm = cand
+                break
+        if nm is None:
+            nm = new_moons_between(t0, shift(t0, 35))[0]
+    else:
+        ref_t = local_to_t(d, 19, default_tz)
+        prev_nm, next_nm = surrounding_new_moons(shift(ref_t, 0.05))
+        age_prev_d = (ref_t.tt - prev_nm.tt)
+        nm = prev_nm if age_prev_d <= 4.0 else next_nm
+
+    conj_local = t_to_local(nm, default_tz)
+    evening_dates = [conj_local.date() + dt.timedelta(days=k) for k in range(3)]
+    if day_offset in (0, 1, 2):
+        d = evening_dates[day_offset]
+    elif hijri_month > 0 and d not in evening_dates:
+        d = evening_dates[1]  # par défaut J+1 (soirée décisive)
+
+    all_locs = []
+    regions_out = []
+
+    for reg in cat["regions"]:
+        loc_list = []
+        for loc in reg["localities"]:
+            tz = loc.get("tz", default_tz)
+            c = _crescent_summary(loc["lat"], loc["lon"], tz, d, nm)
+            odeh_v = c["odeh"]["v"] if c.get("possible") and c.get("odeh") else -99.0
+            yallop_q = c["yallop"]["q"] if c.get("possible") and c.get("yallop") else -9.9
+            item = {
+                "name": loc["name"],
+                "type": loc["type"],
+                "region": reg["region"],
+                "lat": loc["lat"],
+                "lon": loc["lon"],
+                "tz": tz,
+                "sunset": c["sunset"],
+                "moonset": c["moonset"],
+                "lag_minutes": c["lag_minutes"],
+                "age_hours": c["age_hours"],
+                "possible": c["possible"],
+                "verdict_code": c["verdict_code"],
+                "verdict_text": c["verdict_text"],
+                "level": c["level"],
+                "odeh_v": odeh_v if odeh_v > -90 else None,
+                "odeh_code": c["odeh"]["code"] if c.get("possible") and c.get("odeh") else "D",
+                "yallop_q": yallop_q if yallop_q > -9 else None,
+                "yallop_code": c["yallop"]["code"] if c.get("possible") and c.get("yallop") else "F",
+                "moon_alt": c.get("moon_alt"),
+                "arcl": c.get("arcl"),
+                "_score": odeh_v if c.get("possible") else (-50.0 + (c.get("lag_minutes") or -60) * 0.1),
+            }
+            loc_list.append(item)
+            all_locs.append(item)
+
+        best_reg = max(loc_list, key=lambda x: x["_score"])
+        regions_out.append({
+            "region": reg["region"],
+            "best_locality": best_reg["name"],
+            "verdict_code": best_reg["verdict_code"],
+            "verdict_text": best_reg["verdict_text"],
+            "level": best_reg["level"],
+            "odeh_v": best_reg["odeh_v"],
+            "localities": loc_list,
+        })
+
+    # Point Sentinelle = localité ayant le score astronomique maximal dans tout le pays
+    sentinel = max(all_locs, key=lambda x: x["_score"])
+    worst = min(all_locs, key=lambda x: x["_score"])
+
+    counts = {
+        "naked_eye": sum(1 for x in all_locs if x["verdict_code"] == "naked_eye"),
+        "naked_eye_possible": sum(1 for x in all_locs if x["verdict_code"] == "naked_eye_possible"),
+        "optical_only": sum(1 for x in all_locs if x["verdict_code"] == "optical_only"),
+        "not_visible": sum(1 for x in all_locs if x["verdict_code"] == "not_visible"),
+        "total": len(all_locs),
+    }
+
+    if sentinel["verdict_code"] == "not_visible":
+        rule_title = f"IMPOSSIBLE À VOIR DANS TOUT LE PAYS ({cat['name']})"
+        rule_text = (
+            f"Le point géographiquement le plus favorable est {sentinel['name']} (Région de {sentinel['region']}). "
+            f"Même en ce Point Sentinelle, le croissant est scientifiquement invisible "
+            f"({sentinel['verdict_text'].lower()}). D'après les lois de la mécanique céleste, "
+            f"si la Lune n'est pas visible au point le plus favorable, il est mathématiquement impossible "
+            f"de l'apercevoir dans aucune autre région, ville ou village ce soir-là."
+        )
+        rule_level = "bad"
+    elif counts["naked_eye"] == counts["total"]:
+        rule_title = f"VISIBLE À L'ŒIL NU DANS TOUTES LES RÉGIONS ({cat['name']})"
+        rule_text = (
+            f"Le croissant est visible à l'œil nu dans les {counts['total']} localités analysées "
+            f"(du Point Sentinelle {sentinel['name']} jusqu'à {worst['name']}), sous réserve d'un ciel dégagé."
+        )
+        rule_level = "good"
+    else:
+        rule_title = f"VISIBILITÉ DIFFÉRENCIÉE SELON LES RÉGIONS ({cat['name']})"
+        rule_text = (
+            f"Le Point Sentinelle le plus favorable est {sentinel['name']} ({sentinel['region']}) avec "
+            f"V = {sentinel['odeh_v'] if sentinel['odeh_v'] is not None else '—'} ({sentinel['verdict_text']}). "
+            f"Bilan : {counts['naked_eye']} localité(s) visible(s) à l'œil nu, "
+            f"{counts['naked_eye_possible']} possible(s) avec repérage optique, "
+            f"{counts['optical_only']} aux instruments uniquement, et {counts['not_visible']} non visible(s)."
+        )
+        rule_level = "maybe" if (counts["naked_eye"] + counts["naked_eye_possible"]) > 0 else "optical"
+
+    for x in all_locs:
+        x.pop("_score", None)
+
+    hy, _, hname = month_starting_after(conj_local.date())
+
+    return {
+        "country_code": cat["code"],
+        "country_name": cat["name"],
+        "flag": cat["flag"],
+        "date": d.isoformat(),
+        "date_label": fr_date(d),
+        "evenings": [{"date": ed.isoformat(), "label": fr_date(ed), "index": idx}
+                     for idx, ed in enumerate(evening_dates)],
+        "hijri_target": f"{hname} {hy} H",
+        "conjunction_label": f"{fr_date(conj_local.date())} à {conj_local.strftime('%H:%M')} (UTC{default_tz:+d})",
+        "sentinel": sentinel,
+        "rule_title": rule_title,
+        "rule_text": rule_text,
+        "rule_level": rule_level,
+        "counts": counts,
+        "regions": regions_out,
+    }
+
+
+def nearest_locality(lat: float, lon: float) -> dict:
+    """Trouve la localité répertoriée la plus proche des coordonnées GPS (formule de Haversine)."""
+    best = None
+    best_dist = 1e9
+    for ccode, cat in COUNTRIES_CATALOG.items():
+        for reg in cat["regions"]:
+            for loc in reg["localities"]:
+                dlat = math.radians(loc["lat"] - lat)
+                dlon = math.radians(loc["lon"] - lon)
+                a = (math.sin(dlat / 2) ** 2
+                     + math.cos(math.radians(lat)) * math.cos(math.radians(loc["lat"])) * math.sin(dlon / 2) ** 2)
+                dist = 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                if dist < best_dist:
+                    best_dist = dist
+                    best = {
+                        "name": loc["name"],
+                        "region": reg["region"],
+                        "country": cat["name"].split(" (")[0],
+                        "country_code": ccode,
+                        "flag": cat["flag"],
+                        "lat": round(lat, 4),
+                        "lon": round(lon, 4),
+                        "nearest_name": loc["name"],
+                        "distance_km": round(dist, 1),
+                        "tz": loc.get("tz", cat["tz"]),
+                    }
+    return best
