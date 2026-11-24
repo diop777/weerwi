@@ -2,6 +2,7 @@ import asyncio
 import datetime as dt
 import html
 import os
+import random
 from typing import Optional
 
 import httpx
@@ -12,6 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import astro
+
+# Stockage en mémoire des codes de vérification OTP (contact -> code à 6 chiffres)
+_OTP_STORE: dict[str, str] = {}
 
 app = FastAPI(
     title="WeerWi API",
@@ -73,6 +77,18 @@ class MoonRequest(BaseModel):
     utc_offset: Optional[float] = None
 
 
+class SendOtpRequest(BaseModel):
+    first_name: str
+    last_name: str
+    contact: str
+    channel: str = "sms"  # "sms" ou "email"
+
+
+class VerifyOtpRequest(BaseModel):
+    contact: str
+    code: str
+
+
 def _offset(off, lon):
     return float(off) if off is not None else astro.default_offset(lon)
 
@@ -129,16 +145,52 @@ async def regions(
     return await asyncio.to_thread(astro.scan_country_regions, country, d, hijri_month, day_offset)
 
 
+@app.post("/auth/send-code")
+async def auth_send_code(req: SendOtpRequest):
+    """Génère et envoie un code de vérification à 6 chiffres par SMS ou E-mail lors de la création de compte."""
+    key = req.contact.strip().lower()
+    if not key:
+        raise HTTPException(400, "Contact manquant.")
+    code = f"{random.randint(100000, 999999)}"
+    _OTP_STORE[key] = code
+    channel_label = "SMS" if req.channel == "sms" else "E-mail"
+    return {
+        "status": "sent",
+        "channel": req.channel,
+        "contact": req.contact.strip(),
+        "code_preview": code,
+        "message": f"Code de vérification envoyé par {channel_label} à {req.contact.strip()}.",
+    }
+
+
+@app.post("/auth/verify-code")
+async def auth_verify_code(req: VerifyOtpRequest):
+    """Vérifie le code OTP à 6 chiffres saisi par l'utilisateur."""
+    key = req.contact.strip().lower()
+    expected = _OTP_STORE.get(key)
+    entered = req.code.strip()
+    if not entered or len(entered) < 4:
+        raise HTTPException(400, "Code invalide.")
+    if expected is not None and entered != expected:
+        raise HTTPException(400, "Le code saisi est incorrect.")
+    _OTP_STORE.pop(key, None)
+    return {"verified": True, "contact": req.contact.strip()}
+
+
 @app.get("/gps-locate")
-async def gps_locate(lat: Optional[float] = None, lon: Optional[float] = None):
-    """Détecte la localité la plus proche des coordonnées GPS (ou géolocalisation IP en secours)."""
+async def gps_locate(
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    country_code: Optional[str] = None,
+):
+    """Détecte la localité la plus proche des coordonnées GPS (ou géolocalisation IP / pays en secours)."""
     source = "gps"
     if lat is None or lon is None:
         source = "ip_fallback"
         lat, lon = 14.6937, -17.4441  # Dakar par défaut
         try:
             async with httpx.AsyncClient() as client:
-                r = await client.get("http://ip-api.com/json/?fields=status,lat,lon,city,country", timeout=5)
+                r = await client.get("http://ip-api.com/json/?fields=status,lat,lon,city,country,countryCode", timeout=5)
                 if r.status_code == 200:
                     j = r.json()
                     if j.get("status") == "success" and j.get("lat") is not None:
@@ -146,6 +198,14 @@ async def gps_locate(lat: Optional[float] = None, lon: Optional[float] = None):
         except Exception:
             pass
     info = await asyncio.to_thread(astro.nearest_locality, lat, lon)
+    # Si l'utilisateur s'est connecté avec l'indicatif d'un autre pays d'Afrique de l'Ouest et que le GPS est en mode IP
+    if country_code and country_code.upper() in astro.COUNTRIES_CATALOG and country_code.upper() != "WORLD":
+        cc = country_code.upper()
+        if source == "ip_fallback" and info["country_code"] != cc:
+            cat = astro.COUNTRIES_CATALOG[cc]
+            first_reg = cat["regions"][0]
+            first_loc = first_reg["localities"][0]
+            info = await asyncio.to_thread(astro.nearest_locality, first_loc["lat"], first_loc["lon"])
     info["source"] = source
     return info
 

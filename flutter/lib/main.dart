@@ -35,7 +35,7 @@ class WeerWiApp extends StatelessWidget {
   }
 }
 
-enum _AppStage { login, locationPermission, ready }
+enum _AppStage { login, verifyOtp, locationPermission, ready }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -45,20 +45,37 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  // Parcours d'entrée : 1) Connexion mobile -> 2) Autorisation GPS -> 3) Observatoire du pays
+  // Parcours d'entrée : 1) Connexion / Création de compte -> 2) Code OTP (si création) -> 3) Autorisation GPS -> 4) Observatoire
   _AppStage _stage = _AppStage.login;
+  bool _isSignUp = false; // false = Se connecter, true = Créer un compte
   bool _loginWithPhone = true;
-  final TextEditingController _phoneCtrl = TextEditingController(text: '+221 ');
+  bool _obscurePassword = true;
+  bool _isGuest = false;
+  bool _authBusy = false;
+
+  // Sélecteur d'indicatif téléphonique (les 16 pays d'Afrique de l'Ouest)
+  DialCountry _dialCountry = kWestAfricaDialCodes[0]; // +221 Sénégal par défaut
+  String? _preferredCountryCode; // pays choisi lors de la connexion téléphonique
+
+  final TextEditingController _firstNameCtrl = TextEditingController();
+  final TextEditingController _lastNameCtrl = TextEditingController();
+  final TextEditingController _phoneCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
-  String? _authIdentity; // ex: "+221 77 123 45 67", "user@email.com" ou "Compte Apple"
+  final TextEditingController _otpCtrl = TextEditingController();
+
+  String? _authIdentity;
+  String? _userFullName;
+  String? _pendingContact;
+  String _pendingChannel = 'sms';
+  String? _otpPreviewCode;
   String? _authError;
 
   // Localisation détectée & villes du pays de l'utilisateur uniquement
   City _city = kDefaultCountryCities[0];
   List<City> _countryCities = kDefaultCountryCities;
   int _regionCount = 14;
-  int _tab = 0; // 0: Ce soir, 1: Calendrier, 2: Ramadan, 3: Régions du pays
+  int _tab = 0; // 0: Ce soir, 1: Calendrier, 2: Ramadan, 3: Régions
   bool _phoneMode = true;
   bool _gpsLoading = false;
 
@@ -77,14 +94,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Map<String, dynamic>? _selectedDayData;
 
   // État Onglet 2 (Hilal & Ramadan)
-  int _targetHijriMonth = 9; // 9 = Ramadan, 10 = Chawwal, 12 = Dhou al-Hijja, 0 = Prochain mois
+  int _targetHijriMonth = 9;
   Map<String, dynamic>? _hilalData;
   bool _loadingHilal = false;
   String? _errorHilal;
 
   // État Onglet 3 (Régions du pays de l'utilisateur)
   int _regionHijriMonth = 9;
-  int _regionDayOffset = 1; // 0=Soir J0, 1=Soir J+1, 2=Soir J+2
+  int _regionDayOffset = 1;
   Map<String, dynamic>? _regionsData;
   bool _loadingRegions = false;
   String? _errorRegions;
@@ -104,51 +121,154 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _firstNameCtrl.dispose();
+    _lastNameCtrl.dispose();
     _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _passCtrl.dispose();
+    _otpCtrl.dispose();
     _float.dispose();
     _orbit.dispose();
     _pulse.dispose();
     super.dispose();
   }
 
-  // ─────────────────────────── Étape 1 : Connexion Mobile ───────────────────────────
-  Future<void> _submitCredentialsLogin() async {
+  // ─────────────────────────── Étape 1 : Connexion / Création de Compte ───────────────────────────
+  Future<void> _submitAuthForm() async {
     setState(() => _authError = null);
+
+    final firstName = _firstNameCtrl.text.trim();
+    final lastName = _lastNameCtrl.text.trim();
+    final pass = _passCtrl.text.trim();
+
+    if (_isSignUp) {
+      if (firstName.isEmpty || lastName.isEmpty) {
+        setState(() => _authError = 'Veuillez renseigner votre prénom et votre nom.');
+        return;
+      }
+    }
+
+    String contact;
+    String channel;
     if (_loginWithPhone) {
-      final phone = _phoneCtrl.text.trim();
-      if (phone.length < 6) {
+      final rawPhone = _phoneCtrl.text.trim();
+      if (rawPhone.length < 5) {
         setState(() => _authError = 'Veuillez saisir un numéro de téléphone valide.');
         return;
       }
-      setState(() {
-        _authIdentity = phone;
-        _stage = _AppStage.locationPermission;
-      });
+      contact = '${_dialCountry.dial} $rawPhone';
+      channel = 'sms';
+      _preferredCountryCode = _dialCountry.code;
     } else {
       final email = _emailCtrl.text.trim();
-      final pass = _passCtrl.text.trim();
       if (email.isEmpty || !email.contains('@')) {
         setState(() => _authError = 'Veuillez saisir une adresse e-mail valide.');
         return;
       }
-      if (pass.length < 4) {
-        setState(() => _authError = 'Veuillez saisir votre mot de passe.');
-        return;
-      }
+      contact = email;
+      channel = 'email';
+      _preferredCountryCode = null;
+    }
+
+    if (pass.length < 4) {
+      setState(() => _authError = 'Veuillez définir un mot de passe (minimum 4 caractères).');
+      return;
+    }
+
+    if (_isSignUp) {
+      // Création de compte : envoi d'un code de vérification à 6 chiffres par SMS ou E-mail
+      setState(() => _authBusy = true);
       try {
-        await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
-      } catch (_) {
+        final res = await Api.sendOtp(
+          firstName: firstName,
+          lastName: lastName,
+          contact: contact,
+          channel: channel,
+        );
+        if (!mounted) return;
+        setState(() {
+          _pendingContact = contact;
+          _pendingChannel = channel;
+          _otpPreviewCode = (res['code_preview'] as String?) ?? '';
+          _userFullName = '$firstName $lastName';
+          _otpCtrl.clear();
+          _stage = _AppStage.verifyOtp;
+        });
+      } catch (e) {
+        if (!mounted) return;
+        setState(() => _authError = "Impossible d'envoyer le code de vérification.");
+      } finally {
+        if (mounted) setState(() => _authBusy = false);
+      }
+    } else {
+      // Connexion directe d'un utilisateur existant
+      if (!_loginWithPhone) {
         try {
-          await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: pass);
+          await FirebaseAuth.instance.signInWithEmailAndPassword(email: contact, password: pass);
         } catch (_) {}
       }
       if (!mounted) return;
       setState(() {
-        _authIdentity = email;
+        _isGuest = false;
+        _authIdentity = contact;
         _stage = _AppStage.locationPermission;
       });
+    }
+  }
+
+  Future<void> _verifyOtpCode() async {
+    setState(() => _authError = null);
+    final code = _otpCtrl.text.trim();
+    if (code.length < 4) {
+      setState(() => _authError = 'Veuillez saisir le code à 6 chiffres reçu.');
+      return;
+    }
+    setState(() => _authBusy = true);
+    try {
+      await Api.verifyOtp(contact: _pendingContact ?? '', code: code);
+      if (!_loginWithPhone && _pendingContact != null) {
+        try {
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(
+            email: _pendingContact!,
+            password: _passCtrl.text.trim(),
+          );
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _isGuest = false;
+        _authIdentity = _pendingContact;
+        _stage = _AppStage.locationPermission;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _authError = 'Code de vérification incorrect. Vérifiez le code reçu.');
+    } finally {
+      if (mounted) setState(() => _authBusy = false);
+    }
+  }
+
+  Future<void> _resendOtpCode() async {
+    setState(() {
+      _authBusy = true;
+      _authError = null;
+    });
+    try {
+      final res = await Api.sendOtp(
+        firstName: _firstNameCtrl.text.trim(),
+        lastName: _lastNameCtrl.text.trim(),
+        contact: _pendingContact ?? '',
+        channel: _pendingChannel,
+      );
+      if (!mounted) return;
+      setState(() {
+        _otpPreviewCode = (res['code_preview'] as String?) ?? '';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _authError = 'Impossible de renvoyer le code.');
+    } finally {
+      if (mounted) setState(() => _authBusy = false);
     }
   }
 
@@ -160,16 +280,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } catch (_) {}
     if (!mounted) return;
     setState(() {
+      _isGuest = false;
+      _preferredCountryCode = null;
       _authIdentity = 'Compte Apple';
       _stage = _AppStage.locationPermission;
     });
   }
 
-  // ─────────────────────────── Étape 2 : Autorisation GPS & Adaptation au Pays ───────────────────────────
+  void _continueAsGuest() {
+    setState(() {
+      _authError = null;
+      _isGuest = true;
+      _authIdentity = null;
+      _userFullName = null;
+      _preferredCountryCode = null;
+      _stage = _AppStage.locationPermission;
+    });
+  }
+
+  // ─────────────────────────── Étape 3 : Autorisation GPS & Adaptation au Pays ───────────────────────────
   Future<void> _authorizeAndDetectGps() async {
     setState(() => _gpsLoading = true);
     try {
-      final info = await Api.gpsLocate();
+      final info = await Api.gpsLocate(countryCode: _preferredCountryCode);
       if (!mounted) return;
       final detected = City.fromJson(info);
       final rawCities = (info['country_cities'] as List?) ?? [];
@@ -351,9 +484,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               const Icon(Icons.phone_android_rounded, color: kGold, size: 18),
               const SizedBox(width: 8),
               Text(
-                _phoneMode
-                    ? 'Téléphone Virtuel Mobile • WeerWi'
-                    : 'Mode Observatoire Grand Écran',
+                _phoneMode ? 'Téléphone Virtuel Mobile • WeerWi' : 'Mode Observatoire Grand Écran',
                 style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
               ),
             ],
@@ -465,69 +596,70 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildStageContent({required bool inPhone}) {
-    if (_stage == _AppStage.login) {
-      return _buildLoginScreen(inPhone: inPhone);
+    switch (_stage) {
+      case _AppStage.login:
+        return _buildLoginScreen(inPhone: inPhone);
+      case _AppStage.verifyOtp:
+        return _buildVerifyOtpScreen(inPhone: inPhone);
+      case _AppStage.locationPermission:
+        return _buildLocationPermissionScreen(inPhone: inPhone);
+      case _AppStage.ready:
+        return _buildAppScrollContent(inPhone: inPhone);
     }
-    if (_stage == _AppStage.locationPermission) {
-      return _buildLocationPermissionScreen(inPhone: inPhone);
-    }
-    return _buildAppScrollContent(inPhone: inPhone);
   }
 
-  // ═══════════════════════════ ÉCRAN 1 : CONNEXION MOBILE NATIVE ═══════════════════════════
+  // ═══════════════════════════ ÉCRAN 1 : CONNEXION & CRÉATION DE COMPTE ═══════════════════════════
   Widget _buildLoginScreen({required bool inPhone}) {
     return SingleChildScrollView(
-      padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 24),
+      padding: EdgeInsets.symmetric(horizontal: inPhone ? 18 : 28, vertical: 16),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Column(
             children: [
-              const SizedBox(height: 10),
               // Lune lumineuse d'accueil
               SizedBox(
-                height: 150,
+                height: 120,
                 child: AnimatedBuilder(
                   animation: Listenable.merge([_float, _pulse]),
                   builder: (context, _) {
-                    final dy = math.sin(_float.value * 2 * math.pi) * 6;
+                    final dy = math.sin(_float.value * 2 * math.pi) * 5;
                     return Transform.translate(
                       offset: Offset(0, dy),
                       child: CustomPaint(
-                        size: const Size(140, 140),
+                        size: const Size(115, 115),
                         painter: MoonPainter(illumination: 24, waxing: true, glow: 0.7 + 0.3 * _pulse.value),
                       ),
                     );
                   },
                 ),
               ),
-              const SizedBox(height: 8),
               ShaderMask(
                 shaderCallback: (b) => const LinearGradient(colors: [kGold, Colors.white, kCyan]).createShader(b),
                 child: const Text(
                   'WeerWi',
-                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 3),
+                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 3),
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               const Text(
                 'Observatoire scientifique du croissant lunaire',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 13),
+                style: TextStyle(color: Colors.white70, fontSize: 12.5),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 18),
 
               Glass(
                 accent: kGold,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Bascule Téléphone / E-mail
+                    // Sélecteur : Se connecter | Créer un compte
                     Container(
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.3),
+                        color: Colors.black.withOpacity(0.35),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: Colors.white12),
                       ),
@@ -537,30 +669,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
                               onTap: () => setState(() {
-                                _loginWithPhone = true;
+                                _isSignUp = false;
                                 _authError = null;
                               }),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(vertical: 10),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(12),
-                                  gradient: _loginWithPhone ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+                                  gradient: !_isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.phone_iphone_rounded,
-                                        size: 16, color: _loginWithPhone ? kInk : Colors.white70),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Téléphone',
-                                      style: TextStyle(
-                                        color: _loginWithPhone ? kInk : Colors.white70,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12.5,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  'Se connecter',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: !_isSignUp ? kInk : Colors.white70,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12.5,
+                                  ),
                                 ),
                               ),
                             ),
@@ -569,30 +694,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
                               onTap: () => setState(() {
-                                _loginWithPhone = false;
+                                _isSignUp = true;
                                 _authError = null;
                               }),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(vertical: 10),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(12),
-                                  gradient: !_loginWithPhone ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+                                  gradient: _isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.alternate_email_rounded,
-                                        size: 16, color: !_loginWithPhone ? kInk : Colors.white70),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'E-mail',
-                                      style: TextStyle(
-                                        color: !_loginWithPhone ? kInk : Colors.white70,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12.5,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  'Créer un compte',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: _isSignUp ? kInk : Colors.white70,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 12.5,
+                                  ),
                                 ),
                               ),
                             ),
@@ -600,21 +718,170 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
+
+                    // Prénom & Nom uniquement lors de la création de compte
+                    if (_isSignUp) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _firstNameCtrl,
+                              style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                              decoration: InputDecoration(
+                                labelText: 'Prénom',
+                                isDense: true,
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _lastNameCtrl,
+                              style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                              decoration: InputDecoration(
+                                labelText: 'Nom',
+                                isDense: true,
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    // Bascule Téléphone / E-mail
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () => setState(() {
+                              _loginWithPhone = true;
+                              _authError = null;
+                            }),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                color: _loginWithPhone ? kCyan.withOpacity(0.18) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: _loginWithPhone ? kCyan : Colors.white12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.phone_iphone_rounded,
+                                      size: 15, color: _loginWithPhone ? kCyan : Colors.white60),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    'Par Téléphone',
+                                    style: TextStyle(
+                                      color: _loginWithPhone ? kCyan : Colors.white60,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () => setState(() {
+                              _loginWithPhone = false;
+                              _authError = null;
+                            }),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                color: !_loginWithPhone ? kCyan.withOpacity(0.18) : Colors.white.withOpacity(0.04),
+                                border: Border.all(color: !_loginWithPhone ? kCyan : Colors.white12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.mail_outline_rounded,
+                                      size: 15, color: !_loginWithPhone ? kCyan : Colors.white60),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    'Par E-mail',
+                                    style: TextStyle(
+                                      color: !_loginWithPhone ? kCyan : Colors.white60,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
 
                     if (_loginWithPhone) ...[
-                      TextField(
-                        controller: _phoneCtrl,
-                        keyboardType: TextInputType.phone,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
-                        decoration: InputDecoration(
-                          labelText: 'Numéro de téléphone',
-                          hintText: '+221 77 000 00 00',
-                          prefixIcon: const Icon(Icons.phone_rounded, color: kGold),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
+                      // Sélecteur d'indicatif des 16 pays d'Afrique de l'Ouest + numéro
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: _showDialCountryPicker,
+                            child: Container(
+                              height: 50,
+                              padding: const EdgeInsets.symmetric(horizontal: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.07),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: kGold.withOpacity(0.55)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(_dialCountry.flag, style: const TextStyle(fontSize: 17)),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _dialCountry.dial,
+                                    style: const TextStyle(
+                                      color: kGold,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 13.5,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 2),
+                                  const Icon(Icons.arrow_drop_down_rounded, color: Colors.white70, size: 18),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _phoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              decoration: InputDecoration(
+                                labelText: 'Numéro (${_dialCountry.name})',
+                                hintText: '77 000 00 00',
+                                isDense: true,
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.05),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ] else ...[
                       TextField(
@@ -624,73 +891,106 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         decoration: InputDecoration(
                           labelText: 'Adresse e-mail',
                           hintText: 'exemple@email.com',
-                          prefixIcon: const Icon(Icons.mail_outline_rounded, color: kCyan),
+                          isDense: true,
+                          prefixIcon: const Icon(Icons.mail_outline_rounded, color: kCyan, size: 19),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _passCtrl,
-                        obscureText: true,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
-                        decoration: InputDecoration(
-                          labelText: 'Mot de passe',
-                          prefixIcon: const Icon(Icons.lock_outline_rounded, color: kViolet),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                     ],
+
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _passCtrl,
+                      obscureText: _obscurePassword,
+                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      decoration: InputDecoration(
+                        labelText: _isSignUp ? 'Créer un mot de passe' : 'Mot de passe',
+                        isDense: true,
+                        prefixIcon: const Icon(Icons.lock_outline_rounded, color: kViolet, size: 19),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                            color: Colors.white54,
+                            size: 18,
+                          ),
+                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.05),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                    ),
 
                     if (_authError != null) ...[
                       const SizedBox(height: 10),
                       Text(_authError!, style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.bold)),
                     ],
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     ElevatedButton(
-                      onPressed: _submitCredentialsLogin,
+                      onPressed: _authBusy ? null : _submitAuthForm,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: kGold,
                         foregroundColor: kInk,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      child: const Text(
-                        'Continuer',
-                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-                      ),
+                      child: _authBusy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
+                            )
+                          : Text(
+                              _isSignUp ? 'Créer mon compte & Recevoir le code' : 'Se connecter',
+                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
+                            ),
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
                     Row(
                       children: [
                         Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
-                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 10.5)),
                         ),
                         Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-                    // Bouton officiel "Continuer avec Apple" (App Store / iOS)
+                    // Bouton officiel "Continuer avec Apple"
                     ElevatedButton.icon(
                       onPressed: _submitAppleLogin,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
-                      icon: const Icon(Icons.apple_rounded, size: 22, color: Colors.black),
+                      icon: const Icon(Icons.apple_rounded, size: 20, color: Colors.black),
                       label: const Text(
                         'Continuer avec Apple',
-                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: Colors.black),
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.black),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+                    // Bouton "Continuer sans créer de compte" (Mode Invité)
+                    TextButton.icon(
+                      onPressed: _continueAsGuest,
+                      icon: const Icon(Icons.explore_outlined, size: 16, color: Colors.white70),
+                      label: const Text(
+                        'Continuer sans créer de compte (Mode Invité)',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          decoration: TextDecoration.underline,
+                        ),
                       ),
                     ),
                   ],
@@ -703,7 +1003,222 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ ÉCRAN 2 : AUTORISATION DE LOCALISATION GPS ═══════════════════════════
+  /// Sélecteur des 16 indicatifs téléphoniques d'Afrique de l'Ouest
+  void _showDialCountryPicker() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF101432),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: kGold.withOpacity(0.45)),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.public_rounded, color: kGold, size: 20),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Indicatif Pays (Afrique de l’Ouest)',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 340,
+          height: 380,
+          child: ListView.separated(
+            itemCount: kWestAfricaDialCodes.length,
+            separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.08)),
+            itemBuilder: (context, i) {
+              final item = kWestAfricaDialCodes[i];
+              final sel = item.code == _dialCountry.code;
+              return ListTile(
+                dense: true,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                tileColor: sel ? kGold.withOpacity(0.18) : null,
+                leading: Text(item.flag, style: const TextStyle(fontSize: 22)),
+                title: Text(
+                  item.name,
+                  style: TextStyle(
+                    color: sel ? kGold : Colors.white,
+                    fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
+                    fontSize: 13.5,
+                  ),
+                ),
+                trailing: Text(
+                  item.dial,
+                  style: TextStyle(
+                    color: sel ? kGold : kCyan,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 13.5,
+                  ),
+                ),
+                onTap: () {
+                  setState(() => _dialCountry = item);
+                  Navigator.pop(ctx);
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════ ÉCRAN 2 : VÉRIFICATION DU CODE OTP (SMS / E-MAIL) ═══════════════════════════
+  Widget _buildVerifyOtpScreen({required bool inPhone}) {
+    final isSms = _pendingChannel == 'sms';
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(horizontal: inPhone ? 18 : 28, vertical: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            children: [
+              // Notification mobile simulée en haut de l'écran avec le code reçu
+              if (_otpPreviewCode != null && _otpPreviewCode!.isNotEmpty)
+                InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () => setState(() => _otpCtrl.text = _otpPreviewCode!),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 18),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF162447),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: kGreen.withOpacity(0.75), width: 1.4),
+                      boxShadow: [BoxShadow(color: kGreen.withOpacity(0.2), blurRadius: 18)],
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(isSms ? Icons.sms_rounded : Icons.mark_email_unread_rounded, color: kGreen, size: 24),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                isSms ? 'Nouveau SMS reçu • WeerWi' : 'Nouvel E-mail reçu • WeerWi',
+                                style: const TextStyle(color: kGreen, fontWeight: FontWeight.w900, fontSize: 11.5),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Votre code de validation est : $_otpPreviewCode (Appuyez pour remplir)',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12.5),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+              Glass(
+                accent: kGold,
+                padding: const EdgeInsets.all(22),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: kGold.withOpacity(0.14),
+                        border: Border.all(color: kGold, width: 1.6),
+                      ),
+                      child: Icon(
+                        isSms ? Icons.phonelink_lock_rounded : Icons.verified_rounded,
+                        color: kGold,
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      isSms ? 'Vérification par SMS' : 'Vérification par E-mail',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nous avons envoyé un code à 6 chiffres à :\n${_pendingContact ?? ''}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
+                    ),
+                    const SizedBox(height: 18),
+                    TextField(
+                      controller: _otpCtrl,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 6,
+                      style: const TextStyle(
+                        color: kGold,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 10,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: '••••••',
+                        hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 10),
+                        filled: true,
+                        fillColor: Colors.white.withOpacity(0.06),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                    ),
+                    if (_authError != null) ...[
+                      const SizedBox(height: 10),
+                      Text(_authError!, style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _authBusy ? null : _verifyOtpCode,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kGold,
+                          foregroundColor: kInk,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        icon: const Icon(Icons.check_circle_rounded, size: 18),
+                        label: const Text(
+                          'Valider le code & Activer mon compte',
+                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _stage = _AppStage.login;
+                            _authError = null;
+                          }),
+                          child: const Text('← Modifier mes infos', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                        ),
+                        TextButton(
+                          onPressed: _authBusy ? null : _resendOtpCode,
+                          child: const Text('Renvoyer le code', style: TextStyle(color: kCyan, fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════ ÉCRAN 3 : AUTORISATION DE LOCALISATION GPS ═══════════════════════════
   Widget _buildLocationPermissionScreen({required bool inPhone}) {
     return SingleChildScrollView(
       padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 36),
@@ -771,7 +1286,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ ÉCRAN 3 : OBSERVATOIRE DU PAYS DÉTECTÉ ═══════════════════════════
+  // ═══════════════════════════ ÉCRAN 4 : OBSERVATOIRE DU PAYS DÉTECTÉ ═══════════════════════════
   Widget _buildAndroidStatusBar() {
     final now = TimeOfDay.now();
     final hh = now.hour.toString().padLeft(2, '0');
@@ -808,12 +1323,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// Barre de navigation mobile en bas : l'onglet 4 s'appelle toujours simplement "Régions"
   Widget _buildAndroidBottomNav() {
     final items = [
       (0, Icons.nightlight_round, 'Ce soir'),
       (1, Icons.calendar_month_rounded, 'Calendrier'),
       (2, Icons.mosque_rounded, 'Ramadan'),
-      (3, Icons.map_rounded, '$_regionCount Régions'),
+      (3, Icons.map_rounded, 'Régions'),
     ];
     return Container(
       decoration: BoxDecoration(
@@ -932,58 +1448,77 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ],
           ),
         ),
-        // Avatar de profil moderne avec pastille verte "en ligne" (sans exposer l'e-mail ni le numéro)
-        InkWell(
-          customBorder: const CircleBorder(),
-          onTap: _showProfileMenu,
-          child: Tooltip(
-            message: 'Mon profil',
-            child: SizedBox(
-              width: 40,
-              height: 40,
-              child: Stack(
+        if (_isGuest)
+          // En mode Invité (sans compte), bouton discret invitant à se connecter
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => setState(() => _stage = _AppStage.login),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.07),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: kGold.withOpacity(0.55)),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          const Color(0xFF22295A),
-                          const Color(0xFF121636),
-                        ],
-                      ),
-                      border: Border.all(color: kGold.withOpacity(0.55), width: 1.4),
-                      boxShadow: [
-                        BoxShadow(color: kGold.withOpacity(0.18), blurRadius: 12),
-                      ],
-                    ),
-                    child: const Icon(Icons.person_rounded, color: kGold, size: 20),
-                  ),
-                  Positioned(
-                    right: 1,
-                    bottom: 1,
-                    child: Container(
-                      width: 11,
-                      height: 11,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: kGreen,
-                        border: Border.all(color: const Color(0xFF0A0D22), width: 2),
-                        boxShadow: [
-                          BoxShadow(color: kGreen.withOpacity(0.8), blurRadius: 6),
-                        ],
-                      ),
-                    ),
+                  Icon(Icons.person_add_alt_1_rounded, size: 14, color: kGold),
+                  SizedBox(width: 5),
+                  Text(
+                    'Invité • Connexion',
+                    style: TextStyle(color: kGold, fontSize: 10.5, fontWeight: FontWeight.w800),
                   ),
                 ],
               ),
             ),
+          )
+        else
+          // Compte connecté : avatar circulaire moderne avec pastille verte (sans exposer l'e-mail ni le numéro)
+          InkWell(
+            customBorder: const CircleBorder(),
+            onTap: _showProfileMenu,
+            child: Tooltip(
+              message: 'Mon profil',
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFF22295A), Color(0xFF121636)],
+                        ),
+                        border: Border.all(color: kGold.withOpacity(0.55), width: 1.4),
+                        boxShadow: [BoxShadow(color: kGold.withOpacity(0.18), blurRadius: 12)],
+                      ),
+                      child: const Icon(Icons.person_rounded, color: kGold, size: 20),
+                    ),
+                    Positioned(
+                      right: 1,
+                      bottom: 1,
+                      child: Container(
+                        width: 11,
+                        height: 11,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: kGreen,
+                          border: Border.all(color: const Color(0xFF0A0D22), width: 2),
+                          boxShadow: [BoxShadow(color: kGreen.withOpacity(0.8), blurRadius: 6)],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
       ],
     );
   }
@@ -1044,9 +1579,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Compte connecté',
-              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
+            Text(
+              _userFullName ?? 'Compte connecté',
+              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 4),
             Text(
@@ -1099,6 +1634,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       Navigator.pop(ctx);
                       setState(() {
                         _authIdentity = null;
+                        _userFullName = null;
+                        _isGuest = false;
                         _stage = _AppStage.login;
                       });
                     },
@@ -1148,7 +1685,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
         InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _showBulletinDialog,
+          onTap: _isGuest ? _showGuestRestrictionDialog : _showBulletinDialog,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
@@ -1156,12 +1693,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: kViolet.withOpacity(0.6)),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.picture_as_pdf_rounded, size: 13, color: kViolet),
-                SizedBox(width: 5),
-                Text(
+                Icon(_isGuest ? Icons.lock_outline_rounded : Icons.picture_as_pdf_rounded, size: 13, color: kViolet),
+                const SizedBox(width: 5),
+                const Text(
                   'Bulletin PDF',
                   style: TextStyle(color: kViolet, fontSize: 11, fontWeight: FontWeight.w800),
                 ),
@@ -1170,6 +1707,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ),
       ],
+    );
+  }
+
+  void _showGuestRestrictionDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF101432),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: kGold.withOpacity(0.45)),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.lock_person_rounded, color: kGold),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Fonctionnalité réservée aux membres',
+                style: TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'En mode Invité, vous avez accès librement à l’observatoire du soir, à la boussole, au calendrier et aux régions de votre pays.\n\n'
+          'La génération du Bulletin Scientifique Officiel PDF certifié et la sauvegarde de votre profil nécessitent un compte WeerWi.',
+          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Plus tard', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: kGold, foregroundColor: kInk),
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() {
+                _isSignUp = true;
+                _stage = _AppStage.login;
+              });
+            },
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
+            label: const Text('Créer un compte', style: TextStyle(fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1226,12 +1811,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// Barre de navigation grand écran : l'onglet 4 s'appelle toujours simplement "Régions"
   Widget _buildNavigationTabs() {
     final items = [
       (0, Icons.nightlight_round, 'Ce soir • Observatoire'),
       (1, Icons.calendar_month_rounded, 'Calendrier Mensuel'),
       (2, Icons.mosque_rounded, 'Hilal & Ramadan'),
-      (3, Icons.map_rounded, '$_regionCount Régions (${_city.country})'),
+      (3, Icons.map_rounded, 'Régions'),
     ];
     return Container(
       padding: const EdgeInsets.all(6),
@@ -2392,7 +2978,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Sélecteur de Mois & Soirée (J0, J+1, J+2) pour le pays de l'utilisateur
         Glass(
           accent: kCyan,
           padding: const EdgeInsets.all(12),
@@ -2400,7 +2985,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SectionTitle(
-                'OBSERVATOIRE RÉGIONAL • ${_city.country.toUpperCase()} (${_city.flag})',
+                'OBSERVATOIRE DES RÉGIONS • ${_city.country.toUpperCase()} (${_city.flag})',
                 icon: Icons.map_rounded,
                 color: kCyan,
               ),
@@ -2481,7 +3066,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ],
 
         if (_loadingRegions)
-          LoadingBlock('Scan astronomique des $_regionCount régions de ${_city.country}…')
+          LoadingBlock('Scan astronomique des régions de ${_city.country}…')
         else if (r != null) ...[
           const SizedBox(height: 16),
           _buildSentinelRuleCard(r),
@@ -2576,7 +3161,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SectionTitle('LES $_regionCount RÉGIONS & LOCALITÉS ($flag $cname)',
+        SectionTitle('RÉGIONS & LOCALITÉS DE VOTRE PAYS ($flag $cname)',
             icon: Icons.location_city_rounded, color: kGold),
         const SizedBox(height: 10),
         ...regs.map((reg) {
@@ -2743,7 +3328,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
               const SizedBox(height: 12),
               Text(
-                'Lien du Bulletin PDF complet ($_regionCount régions de ${_city.country}) :',
+                'Lien du Bulletin PDF complet (Régions de ${_city.country}) :',
                 style: const TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),

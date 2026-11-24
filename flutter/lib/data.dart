@@ -3,6 +3,34 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
+class DialCountry {
+  final String code; // ex: SN, ML, GM
+  final String name;
+  final String flag;
+  final String dial; // ex: +221
+  const DialCountry(this.code, this.name, this.flag, this.dial);
+}
+
+/// Tous les pays d'Afrique de l'Ouest (CEDEAO + Mauritanie) pour le sélecteur d'indicatif téléphonique
+const List<DialCountry> kWestAfricaDialCodes = [
+  DialCountry('SN', 'Sénégal', '🇸🇳', '+221'),
+  DialCountry('ML', 'Mali', '🇲🇱', '+223'),
+  DialCountry('GM', 'Gambie', '🇬🇲', '+220'),
+  DialCountry('MR', 'Mauritanie', '🇲🇷', '+222'),
+  DialCountry('GN', 'Guinée', '🇬🇳', '+224'),
+  DialCountry('CI', "Côte d'Ivoire", '🇨🇮', '+225'),
+  DialCountry('BF', 'Burkina Faso', '🇧🇫', '+226'),
+  DialCountry('NE', 'Niger', '🇳🇪', '+227'),
+  DialCountry('TG', 'Togo', '🇹🇬', '+228'),
+  DialCountry('BJ', 'Bénin', '🇧🇯', '+229'),
+  DialCountry('GW', 'Guinée-Bissau', '🇬🇼', '+245'),
+  DialCountry('CV', 'Cap-Vert', '🇨🇻', '+238'),
+  DialCountry('GH', 'Ghana', '🇬🇭', '+233'),
+  DialCountry('NG', 'Nigeria', '🇳🇬', '+234'),
+  DialCountry('SL', 'Sierra Leone', '🇸🇱', '+232'),
+  DialCountry('LR', 'Liberia', '🇱🇷', '+231'),
+];
+
 class City {
   final String name, region, country, flag, countryCode;
   final double lat, lon, tz;
@@ -31,7 +59,7 @@ class City {
   }
 }
 
-/// Villes du pays par défaut (Sénégal - 14 Régions & Cités religieuses) avant ou après détection GPS locale
+/// Villes du pays par défaut (Sénégal)
 const List<City> kDefaultCountryCities = [
   City('Dakar', 'Sénégal', '🇸🇳', 14.6937, -17.4441, 0, 'SN', 'Dakar'),
   City('Touba', 'Sénégal', '🇸🇳', 14.8647, -15.8756, 0, 'SN', 'Diourbel'),
@@ -78,6 +106,41 @@ class Api {
       throw Exception('Le serveur a répondu ${r.statusCode}');
     }
     return jsonDecode(utf8.decode(r.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> sendOtp({
+    required String firstName,
+    required String lastName,
+    required String contact,
+    required String channel,
+  }) async {
+    final r = await http
+        .post(
+          buildUri('/auth/send-code'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'first_name': firstName,
+            'last_name': lastName,
+            'contact': contact,
+            'channel': channel,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(r);
+  }
+
+  static Future<Map<String, dynamic>> verifyOtp({
+    required String contact,
+    required String code,
+  }) async {
+    final r = await http
+        .post(
+          buildUri('/auth/verify-code'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'contact': contact, 'code': code}),
+        )
+        .timeout(const Duration(seconds: 20));
+    return _decode(r);
   }
 
   static Future<Map<String, dynamic>> evening(City c, DateTime d) async {
@@ -145,11 +208,14 @@ class Api {
     return _decode(r);
   }
 
-  static Future<Map<String, dynamic>> gpsLocate({double? lat, double? lon}) async {
+  static Future<Map<String, dynamic>> gpsLocate({double? lat, double? lon, String? countryCode}) async {
     final q = <String, String>{};
     if (lat != null && lon != null) {
       q['lat'] = '$lat';
       q['lon'] = '$lon';
+    }
+    if (countryCode != null && countryCode.isNotEmpty) {
+      q['country_code'] = countryCode;
     }
     final r = await http.get(buildUri('/gps-locate', q.isEmpty ? null : q)).timeout(const Duration(seconds: 20));
     return _decode(r);

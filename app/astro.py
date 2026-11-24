@@ -770,6 +770,101 @@ COUNTRIES_CATALOG = {
             ]},
         ],
     },
+    "TG": {
+        "code": "TG", "name": "Togo", "flag": "🇹🇬", "tz": 0,
+        "regions": [
+            {"region": "Maritime & Plateaux", "localities": [
+                {"name": "Lomé", "type": "Capitale", "lat": 6.1375, "lon": 1.2125},
+                {"name": "Kpalimé", "type": "Plateaux Ouest", "lat": 6.9000, "lon": 0.6333},
+                {"name": "Atakpamé", "type": "Plateaux", "lat": 7.5333, "lon": 1.1333},
+            ]},
+            {"region": "Centrale, Kara & Savanes", "localities": [
+                {"name": "Sokodé", "type": "Centrale", "lat": 8.9833, "lon": 1.1333},
+                {"name": "Kara", "type": "Kara", "lat": 9.5511, "lon": 1.1861},
+                {"name": "Dapaong", "type": "Savanes (Nord)", "lat": 10.8622, "lon": 0.2076},
+            ]},
+        ],
+    },
+    "BJ": {
+        "code": "BJ", "name": "Bénin", "flag": "🇧🇯", "tz": 1,
+        "regions": [
+            {"region": "Sud & Littoral", "localities": [
+                {"name": "Cotonou", "type": "Métropole", "lat": 6.3654, "lon": 2.4183},
+                {"name": "Porto-Novo", "type": "Capitale", "lat": 6.4969, "lon": 2.6289},
+                {"name": "Abomey", "type": "Zou", "lat": 7.1829, "lon": 1.9912},
+            ]},
+            {"region": "Centre & Nord", "localities": [
+                {"name": "Parakou", "type": "Borgou", "lat": 9.3372, "lon": 2.6303},
+                {"name": "Djougou", "type": "Donga (Nord-Ouest)", "lat": 9.7085, "lon": 1.6660},
+                {"name": "Natitingou", "type": "Atacora", "lat": 10.3042, "lon": 1.3796},
+                {"name": "Kandi", "type": "Alibori", "lat": 11.1342, "lon": 2.9386},
+            ]},
+        ],
+    },
+    "GW": {
+        "code": "GW", "name": "Guinée-Bissau", "flag": "🇬🇼", "tz": 0,
+        "regions": [
+            {"region": "Littoral & Intérieur", "localities": [
+                {"name": "Bissau", "type": "Capitale", "lat": 11.8636, "lon": -15.5977},
+                {"name": "Cacheu", "type": "Nord-Ouest côtier", "lat": 12.2744, "lon": -16.1656},
+                {"name": "Bafatá", "type": "Centre", "lat": 12.1719, "lon": -14.6575},
+                {"name": "Gabú", "type": "Est", "lat": 12.2800, "lon": -14.2222},
+            ]},
+        ],
+    },
+    "CV": {
+        "code": "CV", "name": "Cap-Vert", "flag": "🇨🇻", "tz": -1,
+        "regions": [
+            {"region": "Archipel (Sotavento & Barlavento)", "localities": [
+                {"name": "Mindelo (São Vicente)", "type": "Nord-Ouest", "lat": 16.8901, "lon": -24.9804, "tz": -1},
+                {"name": "Praia (Santiago)", "type": "Capitale", "lat": 14.9330, "lon": -23.5133, "tz": -1},
+                {"name": "Espargos (Sal)", "type": "Est", "lat": 16.7552, "lon": -22.9446, "tz": -1},
+            ]},
+        ],
+    },
+    "GH": {
+        "code": "GH", "name": "Ghana", "flag": "🇬🇭", "tz": 0,
+        "regions": [
+            {"region": "Sud, Centre & Nord", "localities": [
+                {"name": "Accra", "type": "Capitale", "lat": 5.6037, "lon": -0.1870},
+                {"name": "Takoradi", "type": "Sud-Ouest", "lat": 4.8845, "lon": -1.7554},
+                {"name": "Kumasi", "type": "Ashanti", "lat": 6.6885, "lon": -1.6244},
+                {"name": "Tamale", "type": "Nord", "lat": 9.4034, "lon": -0.8424},
+            ]},
+        ],
+    },
+    "NG": {
+        "code": "NG", "name": "Nigeria", "flag": "🇳🇬", "tz": 1,
+        "regions": [
+            {"region": "Ouest, Centre & Nord", "localities": [
+                {"name": "Lagos", "type": "Sud-Ouest", "lat": 6.5244, "lon": 3.3792},
+                {"name": "Abuja", "type": "Capitale", "lat": 9.0765, "lon": 7.3986},
+                {"name": "Sokoto", "type": "Nord-Ouest", "lat": 13.0059, "lon": 5.2476},
+                {"name": "Kano", "type": "Nord", "lat": 12.0022, "lon": 8.5920},
+                {"name": "Maiduguri", "type": "Nord-Est", "lat": 11.8311, "lon": 13.1510},
+            ]},
+        ],
+    },
+    "SL": {
+        "code": "SL", "name": "Sierra Leone", "flag": "🇸🇱", "tz": 0,
+        "regions": [
+            {"region": "Ouest & Provinces", "localities": [
+                {"name": "Freetown", "type": "Capitale", "lat": 8.4657, "lon": -13.2317},
+                {"name": "Bo", "type": "Sud", "lat": 7.9647, "lon": -11.7383},
+                {"name": "Makeni", "type": "Nord", "lat": 8.8861, "lon": -12.0442},
+            ]},
+        ],
+    },
+    "LR": {
+        "code": "LR", "name": "Liberia", "flag": "🇱🇷", "tz": 0,
+        "regions": [
+            {"region": "Montserrado & Comtés", "localities": [
+                {"name": "Monrovia", "type": "Capitale", "lat": 6.3156, "lon": -10.8074},
+                {"name": "Buchanan", "type": "Grand Bassa", "lat": 5.8808, "lon": -10.0467},
+                {"name": "Gbarnga", "type": "Bong", "lat": 6.9956, "lon": -9.4722},
+            ]},
+        ],
+    },
     "WORLD": {
         "code": "WORLD", "name": "Monde & Lieux Saints", "flag": "🌍", "tz": 0,
         "regions": [
