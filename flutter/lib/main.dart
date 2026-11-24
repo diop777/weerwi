@@ -932,42 +932,185 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ],
           ),
         ),
+        // Avatar de profil moderne avec pastille verte "en ligne" (sans exposer l'e-mail ni le numéro)
         InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () {
-            try {
-              FirebaseAuth.instance.signOut();
-            } catch (_) {}
-            setState(() {
-              _authIdentity = null;
-              _stage = _AppStage.login;
-            });
-          },
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: kGreen.withOpacity(0.14),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kGreen.withOpacity(0.55)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.verified_user_rounded, size: 13, color: kGreen),
-                const SizedBox(width: 5),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 110),
-                  child: Text(
-                    _authIdentity ?? 'Connecté',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: kGreen, fontSize: 10.5, fontWeight: FontWeight.w800),
+          customBorder: const CircleBorder(),
+          onTap: _showProfileMenu,
+          child: Tooltip(
+            message: 'Mon profil',
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Stack(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          const Color(0xFF22295A),
+                          const Color(0xFF121636),
+                        ],
+                      ),
+                      border: Border.all(color: kGold.withOpacity(0.55), width: 1.4),
+                      boxShadow: [
+                        BoxShadow(color: kGold.withOpacity(0.18), blurRadius: 12),
+                      ],
+                    ),
+                    child: const Icon(Icons.person_rounded, color: kGold, size: 20),
                   ),
-                ),
-              ],
+                  Positioned(
+                    right: 1,
+                    bottom: 1,
+                    child: Container(
+                      width: 11,
+                      height: 11,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: kGreen,
+                        border: Border.all(color: const Color(0xFF0A0D22), width: 2),
+                        boxShadow: [
+                          BoxShadow(color: kGreen.withOpacity(0.8), blurRadius: 6),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  String _maskedIdentity(String? raw) {
+    if (raw == null || raw.isEmpty) return 'Session active';
+    if (raw == 'Compte Apple') return 'Identifiant Apple vérifié';
+    if (raw.contains('@')) {
+      final parts = raw.split('@');
+      final u = parts.first;
+      final visible = u.length <= 2 ? u : '${u.substring(0, 2)}••••';
+      return '$visible@${parts.last}';
+    }
+    if (raw.length > 6) {
+      return '${raw.substring(0, 4)} ••• •• ${raw.substring(raw.length - 2)}';
+    }
+    return 'Compte vérifié';
+  }
+
+  void _showProfileMenu() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF101432),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(color: kGold.withOpacity(0.45)),
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Stack(
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [Color(0xFF252D63), Color(0xFF121636)]),
+                    border: Border.all(color: kGold, width: 1.8),
+                  ),
+                  child: const Icon(Icons.person_rounded, color: kGold, size: 34),
+                ),
+                Positioned(
+                  right: 2,
+                  bottom: 2,
+                  child: Container(
+                    width: 15,
+                    height: 15,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kGreen,
+                      border: Border.all(color: const Color(0xFF101432), width: 2.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Compte connecté',
+              style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              _maskedIdentity(_authIdentity),
+              style: const TextStyle(color: Colors.white60, fontSize: 12.5),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.my_location_rounded, color: kCyan, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Zone GPS : ${_city.flag} ${_city.name} (${_city.country})',
+                      style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Fermer', style: TextStyle(color: Colors.white70)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kRed.withOpacity(0.2),
+                      foregroundColor: kRed,
+                      side: BorderSide(color: kRed.withOpacity(0.6)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                    onPressed: () {
+                      try {
+                        FirebaseAuth.instance.signOut();
+                      } catch (_) {}
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _authIdentity = null;
+                        _stage = _AppStage.login;
+                      });
+                    },
+                    icon: const Icon(Icons.logout_rounded, size: 16),
+                    label: const Text('Déconnexion', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
