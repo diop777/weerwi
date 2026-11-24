@@ -502,13 +502,39 @@ def _start_dates(evenings):
             "first_naked_eye_evening": naked["date"] if naked else None}
 
 
-def hilal_from_new_moon(nm, lat, lon, off):
+def country_main_cities(country_code: str) -> list:
+    """Retourne uniquement les villes principales du pays de l'utilisateur (1 à 2 par région)."""
+    cat = COUNTRIES_CATALOG.get((country_code or "SN").upper(), COUNTRIES_CATALOG["SN"])
+    cname = cat["name"].split(" (")[0]
+    flag = cat["flag"]
+    default_tz = cat["tz"]
+    out = []
+    for reg in cat["regions"]:
+        for idx, loc in enumerate(reg["localities"]):
+            # On prend le chef-lieu de chaque région + les grandes cités religieuses
+            if idx == 0 or "religieuse" in loc.get("type", "").lower() or "capitale" in loc.get("type", "").lower():
+                out.append({
+                    "name": loc["name"].split(" (")[0],
+                    "full_name": loc["name"],
+                    "region": reg["region"],
+                    "country": cname,
+                    "country_code": cat["code"],
+                    "flag": flag,
+                    "lat": loc["lat"],
+                    "lon": loc["lon"],
+                    "tz": loc.get("tz", default_tz),
+                })
+    return out
+
+
+def hilal_from_new_moon(nm, lat, lon, off, country_code: str = "SN"):
     conj = t_to_local(nm, off)
     hy, hmo, hname = month_starting_after(conj.date())
     evening_dates = [conj.date() + dt.timedelta(days=k) for k in range(3)]
     loc_evenings = [_crescent_summary(lat, lon, off, d, nm) for d in evening_dates]
+    target_cities = country_main_cities(country_code)
     cities = []
-    for c in CITIES:
+    for c in target_cities:
         ev = [_crescent_summary(c["lat"], c["lon"], c["tz"], d, nm) for d in evening_dates]
         cities.append({**c, "evenings": ev, **_start_dates(ev)})
     return {
@@ -516,24 +542,25 @@ def hilal_from_new_moon(nm, lat, lon, off):
         "conjunction_label": f"{fr_date(conj.date())} à {conj.strftime('%H:%M')}",
         "conjunction_utc": nm.utc_datetime().strftime("%Y-%m-%dT%H:%M"),
         "hijri_month": hname, "hijri_month_number": hmo, "hijri_year": hy,
+        "country_code": (country_code or "SN").upper(),
         "evenings": [{"date": d.isoformat(), "label": fr_date(d)} for d in evening_dates],
         "location": {"evenings": loc_evenings, **_start_dates(loc_evenings)},
         "cities": cities,
     }
 
 
-def hilal_analysis(lat, lon, off, from_date: dt.date):
+def hilal_analysis(lat, lon, off, from_date: dt.date, country_code: str = "SN"):
     t0 = local_to_t(from_date - dt.timedelta(days=1), 0, off)
     nm = new_moons_between(t0, shift(t0, 32))[0]
-    return hilal_from_new_moon(nm, lat, lon, off)
+    return hilal_from_new_moon(nm, lat, lon, off, country_code)
 
 
-def hijri_month_analysis(lat, lon, off, target_month: int, from_date: dt.date):
+def hijri_month_analysis(lat, lon, off, target_month: int, from_date: dt.date, country_code: str = "SN"):
     t0 = local_to_t(from_date - dt.timedelta(days=27), 0, off)
     for nm in new_moons_between(t0, shift(t0, 420)):
         _, m, _ = month_starting_after(t_to_local(nm, off).date())
         if m == target_month:
-            return hilal_from_new_moon(nm, lat, lon, off)
+            return hilal_from_new_moon(nm, lat, lon, off, country_code)
     raise ValueError("Mois introuvable")
 
 
@@ -724,6 +751,25 @@ COUNTRIES_CATALOG = {
             ]},
         ],
     },
+    "GM": {
+        "code": "GM", "name": "Gambie", "flag": "🇬🇲", "tz": 0,
+        "regions": [
+            {"region": "Banjul & Kanifing", "localities": [
+                {"name": "Banjul", "type": "Capitale", "lat": 13.4549, "lon": -16.5790},
+                {"name": "Serekunda", "type": "Kanifing", "lat": 13.4383, "lon": -16.6781},
+            ]},
+            {"region": "West Coast & Lower River", "localities": [
+                {"name": "Brikama", "type": "West Coast", "lat": 13.2714, "lon": -16.6494},
+                {"name": "Mansa Konko", "type": "Lower River", "lat": 13.4667, "lon": -15.5500},
+            ]},
+            {"region": "North Bank, Central & Upper River", "localities": [
+                {"name": "Kerewan", "type": "North Bank", "lat": 13.4898, "lon": -16.0888},
+                {"name": "Farafenni", "type": "North Bank", "lat": 13.5667, "lon": -15.6000},
+                {"name": "Janjanbureh", "type": "Central River", "lat": 13.5333, "lon": -14.7667},
+                {"name": "Basse Santa Su", "type": "Upper River", "lat": 13.3099, "lon": -14.2137},
+            ]},
+        ],
+    },
     "WORLD": {
         "code": "WORLD", "name": "Monde & Lieux Saints", "flag": "🌍", "tz": 0,
         "regions": [
@@ -897,6 +943,8 @@ def nearest_locality(lat: float, lon: float) -> dict:
     best = None
     best_dist = 1e9
     for ccode, cat in COUNTRIES_CATALOG.items():
+        if ccode == "WORLD":
+            continue
         for reg in cat["regions"]:
             for loc in reg["localities"]:
                 dlat = math.radians(loc["lat"] - lat)
@@ -907,7 +955,8 @@ def nearest_locality(lat: float, lon: float) -> dict:
                 if dist < best_dist:
                     best_dist = dist
                     best = {
-                        "name": loc["name"],
+                        "name": loc["name"].split(" (")[0],
+                        "full_name": loc["name"],
                         "region": reg["region"],
                         "country": cat["name"].split(" (")[0],
                         "country_code": ccode,
@@ -917,5 +966,7 @@ def nearest_locality(lat: float, lon: float) -> dict:
                         "nearest_name": loc["name"],
                         "distance_km": round(dist, 1),
                         "tz": loc.get("tz", cat["tz"]),
+                        "region_count": len(cat["regions"]),
+                        "country_cities": country_main_cities(ccode),
                     }
     return best

@@ -22,7 +22,7 @@ class WeerWiApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'WeerWi • Votre astronaute lunaire',
+      title: 'WeerWi • Observatoire Lunaire',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
@@ -35,6 +35,8 @@ class WeerWiApp extends StatelessWidget {
   }
 }
 
+enum _AppStage { login, locationPermission, ready }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -43,13 +45,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  City _city = kCities[0];
-  int _tab = 0; // 0: Ce soir, 1: Calendrier, 2: Hilal & Ramadan, 3: 14 Régions & Pays
-  bool _phoneMode = true;
+  // Parcours d'entrée : 1) Connexion mobile -> 2) Autorisation GPS -> 3) Observatoire du pays
+  _AppStage _stage = _AppStage.login;
+  bool _loginWithPhone = true;
+  final TextEditingController _phoneCtrl = TextEditingController(text: '+221 ');
+  final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _passCtrl = TextEditingController();
+  String? _authIdentity; // ex: "+221 77 123 45 67", "user@email.com" ou "Compte Apple"
+  String? _authError;
 
-  // Profil utilisateur (Firebase Auth + session locale)
-  String? _userName;
-  String? _userEmail;
+  // Localisation détectée & villes du pays de l'utilisateur uniquement
+  City _city = kDefaultCountryCities[0];
+  List<City> _countryCities = kDefaultCountryCities;
+  int _regionCount = 14;
+  int _tab = 0; // 0: Ce soir, 1: Calendrier, 2: Ramadan, 3: Régions du pays
+  bool _phoneMode = true;
   bool _gpsLoading = false;
 
   // État Onglet 0 (Ce soir)
@@ -72,9 +82,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _loadingHilal = false;
   String? _errorHilal;
 
-  // État Onglet 3 (14 Régions du Sénégal & Pays - Point Sentinelle)
-  String _selectedCountryCode = 'SN';
-  int _regionHijriMonth = 9; // 9=Ramadan, 10=Chawwal, 12=Tabaski, 0=Date choisie
+  // État Onglet 3 (Régions du pays de l'utilisateur)
+  int _regionHijriMonth = 9;
   int _regionDayOffset = 1; // 0=Soir J0, 1=Soir J+1, 2=Soir J+2
   Map<String, dynamic>? _regionsData;
   bool _loadingRegions = false;
@@ -91,73 +100,113 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _orbit = AnimationController(vsync: this, duration: const Duration(seconds: 18))..repeat();
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
       ..repeat(reverse: true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadEvening();
-      _loadMonth();
-      _loadHilal();
-      _loadRegions();
-    });
   }
 
   @override
   void dispose() {
+    _phoneCtrl.dispose();
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
     _float.dispose();
     _orbit.dispose();
     _pulse.dispose();
     super.dispose();
   }
 
-  void _selectCity(City c) {
-    setState(() {
-      _city = c;
-      _selectedCountryCode = c.countryCode;
-    });
-    _loadEvening();
-    _loadMonth();
-    _loadHilal();
-    _loadRegions();
+  // ─────────────────────────── Étape 1 : Connexion Mobile ───────────────────────────
+  Future<void> _submitCredentialsLogin() async {
+    setState(() => _authError = null);
+    if (_loginWithPhone) {
+      final phone = _phoneCtrl.text.trim();
+      if (phone.length < 6) {
+        setState(() => _authError = 'Veuillez saisir un numéro de téléphone valide.');
+        return;
+      }
+      setState(() {
+        _authIdentity = phone;
+        _stage = _AppStage.locationPermission;
+      });
+    } else {
+      final email = _emailCtrl.text.trim();
+      final pass = _passCtrl.text.trim();
+      if (email.isEmpty || !email.contains('@')) {
+        setState(() => _authError = 'Veuillez saisir une adresse e-mail valide.');
+        return;
+      }
+      if (pass.length < 4) {
+        setState(() => _authError = 'Veuillez saisir votre mot de passe.');
+        return;
+      }
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
+      } catch (_) {
+        try {
+          await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: pass);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      setState(() {
+        _authIdentity = email;
+        _stage = _AppStage.locationPermission;
+      });
+    }
   }
 
-  Future<void> _detectGps() async {
+  Future<void> _submitAppleLogin() async {
+    setState(() => _authError = null);
+    try {
+      final provider = OAuthProvider('apple.com');
+      await FirebaseAuth.instance.signInWithProvider(provider);
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _authIdentity = 'Compte Apple';
+      _stage = _AppStage.locationPermission;
+    });
+  }
+
+  // ─────────────────────────── Étape 2 : Autorisation GPS & Adaptation au Pays ───────────────────────────
+  Future<void> _authorizeAndDetectGps() async {
     setState(() => _gpsLoading = true);
     try {
       final info = await Api.gpsLocate();
       if (!mounted) return;
-      final detected = City(
-        (info['name'] as String?) ?? 'Position GPS',
-        (info['country'] as String?) ?? 'Sénégal',
-        (info['flag'] as String?) ?? '📍',
-        toD(info['lat']) ?? 14.6937,
-        toD(info['lon']) ?? -17.4441,
-        toD(info['tz']) ?? 0,
-        (info['country_code'] as String?) ?? 'SN',
-      );
+      final detected = City.fromJson(info);
+      final rawCities = (info['country_cities'] as List?) ?? [];
+      final parsedCities = rawCities.isNotEmpty
+          ? rawCities.cast<Map<String, dynamic>>().map(City.fromJson).toList()
+          : kDefaultCountryCities;
       setState(() {
         _city = detected;
-        _selectedCountryCode = detected.countryCode;
+        _countryCities = parsedCities;
+        _regionCount = (info['region_count'] as int?) ?? 14;
+        _stage = _AppStage.ready;
       });
-      _loadEvening();
-      _loadMonth();
-      _loadHilal();
-      _loadRegions();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: const Color(0xFF141B3D),
-          content: Text(
-            '📍 Position GPS détectée : ${detected.flag} ${detected.name} (${detected.country}) — '
-            'Lat ${detected.lat.toStringAsFixed(3)}°, Lon ${detected.lon.toStringAsFixed(3)}°',
-            style: const TextStyle(color: kGreen, fontWeight: FontWeight.bold),
-          ),
-        ),
-      );
-    } catch (e) {
+      _loadAllForCurrentCity();
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Impossible de détecter la position GPS actuelle.')),
-      );
+      setState(() {
+        _city = kDefaultCountryCities[0];
+        _countryCities = kDefaultCountryCities;
+        _regionCount = 14;
+        _stage = _AppStage.ready;
+      });
+      _loadAllForCurrentCity();
     } finally {
       if (mounted) setState(() => _gpsLoading = false);
     }
+  }
+
+  void _selectCity(City c) {
+    setState(() => _city = c);
+    _loadAllForCurrentCity();
+  }
+
+  void _loadAllForCurrentCity() {
+    _loadEvening();
+    _loadMonth();
+    _loadHilal();
+    _loadRegions();
   }
 
   Future<void> _loadEvening() async {
@@ -226,14 +275,20 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
     try {
       final res = await Api.regions(
-        countryCode: _selectedCountryCode,
+        countryCode: _city.countryCode,
         date: _date,
         hijriMonth: _regionHijriMonth,
         dayOffset: _regionDayOffset,
       );
-      if (mounted) setState(() => _regionsData = res);
+      if (mounted) {
+        setState(() {
+          _regionsData = res;
+          final regs = (res['regions'] as List?) ?? [];
+          if (regs.isNotEmpty) _regionCount = regs.length;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => _errorRegions = 'Impossible de charger le scan régional.');
+      if (mounted) setState(() => _errorRegions = 'Impossible de charger les régions.');
     } finally {
       if (mounted) setState(() => _loadingRegions = false);
     }
@@ -264,7 +319,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Expanded(
                   child: showPhoneFrame
                       ? Center(child: _buildAndroidVirtualPhone())
-                      : _buildAppScrollContent(inPhone: false),
+                      : _buildStageContent(inPhone: false),
                 ),
               ],
             ),
@@ -297,7 +352,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               const SizedBox(width: 8),
               Text(
                 _phoneMode
-                    ? 'Émulateur Mobile Android • Google Pixel 8 (Android 14)'
+                    ? 'Téléphone Virtuel Mobile • WeerWi'
                     : 'Mode Observatoire Grand Écran',
                 style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
               ),
@@ -393,8 +448,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         Column(
                           children: [
                             _buildAndroidStatusBar(),
-                            Expanded(child: _buildAppScrollContent(inPhone: true)),
-                            _buildAndroidBottomNav(),
+                            Expanded(child: _buildStageContent(inPhone: true)),
+                            if (_stage == _AppStage.ready) _buildAndroidBottomNav(),
                           ],
                         ),
                       ],
@@ -409,6 +464,314 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  Widget _buildStageContent({required bool inPhone}) {
+    if (_stage == _AppStage.login) {
+      return _buildLoginScreen(inPhone: inPhone);
+    }
+    if (_stage == _AppStage.locationPermission) {
+      return _buildLocationPermissionScreen(inPhone: inPhone);
+    }
+    return _buildAppScrollContent(inPhone: inPhone);
+  }
+
+  // ═══════════════════════════ ÉCRAN 1 : CONNEXION MOBILE NATIVE ═══════════════════════════
+  Widget _buildLoginScreen({required bool inPhone}) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            children: [
+              const SizedBox(height: 10),
+              // Lune lumineuse d'accueil
+              SizedBox(
+                height: 150,
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_float, _pulse]),
+                  builder: (context, _) {
+                    final dy = math.sin(_float.value * 2 * math.pi) * 6;
+                    return Transform.translate(
+                      offset: Offset(0, dy),
+                      child: CustomPaint(
+                        size: const Size(140, 140),
+                        painter: MoonPainter(illumination: 24, waxing: true, glow: 0.7 + 0.3 * _pulse.value),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 8),
+              ShaderMask(
+                shaderCallback: (b) => const LinearGradient(colors: [kGold, Colors.white, kCyan]).createShader(b),
+                child: const Text(
+                  'WeerWi',
+                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 3),
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Observatoire scientifique du croissant lunaire',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const SizedBox(height: 24),
+
+              Glass(
+                accent: kGold,
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Bascule Téléphone / E-mail
+                    Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => setState(() {
+                                _loginWithPhone = true;
+                                _authError = null;
+                              }),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  gradient: _loginWithPhone ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.phone_iphone_rounded,
+                                        size: 16, color: _loginWithPhone ? kInk : Colors.white70),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Téléphone',
+                                      style: TextStyle(
+                                        color: _loginWithPhone ? kInk : Colors.white70,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () => setState(() {
+                                _loginWithPhone = false;
+                                _authError = null;
+                              }),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  gradient: !_loginWithPhone ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.alternate_email_rounded,
+                                        size: 16, color: !_loginWithPhone ? kInk : Colors.white70),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'E-mail',
+                                      style: TextStyle(
+                                        color: !_loginWithPhone ? kInk : Colors.white70,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    if (_loginWithPhone) ...[
+                      TextField(
+                        controller: _phoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: 'Numéro de téléphone',
+                          hintText: '+221 77 000 00 00',
+                          prefixIcon: const Icon(Icons.phone_rounded, color: kGold),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ] else ...[
+                      TextField(
+                        controller: _emailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: 'Adresse e-mail',
+                          hintText: 'exemple@email.com',
+                          prefixIcon: const Icon(Icons.mail_outline_rounded, color: kCyan),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _passCtrl,
+                        obscureText: true,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: InputDecoration(
+                          labelText: 'Mot de passe',
+                          prefixIcon: const Icon(Icons.lock_outline_rounded, color: kViolet),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+                    ],
+
+                    if (_authError != null) ...[
+                      const SizedBox(height: 10),
+                      Text(_authError!, style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ],
+
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _submitCredentialsLogin,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kGold,
+                        foregroundColor: kInk,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text(
+                        'Continuer',
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 10),
+                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                        ),
+                        Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Bouton officiel "Continuer avec Apple" (App Store / iOS)
+                    ElevatedButton.icon(
+                      onPressed: _submitAppleLogin,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      icon: const Icon(Icons.apple_rounded, size: 22, color: Colors.black),
+                      label: const Text(
+                        'Continuer avec Apple',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: Colors.black),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════ ÉCRAN 2 : AUTORISATION DE LOCALISATION GPS ═══════════════════════════
+  Widget _buildLocationPermissionScreen({required bool inPhone}) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 36),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Glass(
+            accent: kCyan,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 78,
+                  height: 78,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: kCyan.withOpacity(0.14),
+                    border: Border.all(color: kCyan.withOpacity(0.6), width: 1.8),
+                    boxShadow: [BoxShadow(color: kCyan.withOpacity(0.25), blurRadius: 24)],
+                  ),
+                  child: const Icon(Icons.my_location_rounded, color: kCyan, size: 38),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Autoriser votre localisation',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'WeerWi a besoin de votre position GPS pour configurer automatiquement l’observatoire lunaire sur votre ville et afficher uniquement les régions de votre pays.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 13.5, height: 1.5),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _gpsLoading ? null : _authorizeAndDetectGps,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kGold,
+                      foregroundColor: kInk,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    icon: _gpsLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
+                          )
+                        : const Icon(Icons.location_on_rounded),
+                    label: Text(
+                      _gpsLoading ? 'Détection GPS en cours…' : 'Autoriser la localisation GPS',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14.5),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════ ÉCRAN 3 : OBSERVATOIRE DU PAYS DÉTECTÉ ═══════════════════════════
   Widget _buildAndroidStatusBar() {
     final now = TimeOfDay.now();
     final hh = now.hour.toString().padLeft(2, '0');
@@ -450,7 +813,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       (0, Icons.nightlight_round, 'Ce soir'),
       (1, Icons.calendar_month_rounded, 'Calendrier'),
       (2, Icons.mosque_rounded, 'Ramadan'),
-      (3, Icons.map_rounded, '14 Régions'),
+      (3, Icons.map_rounded, '$_regionCount Régions'),
     ];
     return Container(
       decoration: BoxDecoration(
@@ -516,9 +879,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               _buildHeader(),
               const SizedBox(height: 10),
-              _buildQuickActionBar(),
-              const SizedBox(height: 14),
-              _buildCitySelector(),
+              _buildLocationAndToolsBar(),
+              const SizedBox(height: 12),
+              _buildLocalCountryCitiesBar(),
               if (!inPhone) ...[
                 const SizedBox(height: 16),
                 _buildNavigationTabs(),
@@ -537,17 +900,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────── En-tête & Actions Rapides (GPS, Bulletin, Compte) ───────────────────────────
   Widget _buildHeader() {
     return Row(
       children: [
         Container(
-          width: 42,
-          height: 42,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: const RadialGradient(colors: [Color(0xFFFFF4C2), kGoldDeep]),
-            boxShadow: [BoxShadow(color: kGold.withOpacity(0.55), blurRadius: 18, spreadRadius: 1)],
+            boxShadow: [BoxShadow(color: kGold.withOpacity(0.55), blurRadius: 16, spreadRadius: 1)],
           ),
           child: const Icon(Icons.nightlight_round, color: Color(0xFF14102A), size: 22),
         ),
@@ -560,50 +922,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 shaderCallback: (b) => const LinearGradient(colors: [kGold, Colors.white, kCyan]).createShader(b),
                 child: const Text(
                   'WeerWi',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    letterSpacing: 2.2,
-                    height: 1.0,
-                  ),
+                  style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 2),
                 ),
               ),
-              const SizedBox(height: 2),
               Text(
-                _userName != null
-                    ? 'Astronaute $_userName • Observatoire du Hilal'
-                    : 'Astronaute personnel • Observatoire du Hilal',
-                style: const TextStyle(color: Colors.white60, fontSize: 10.5),
+                '${_city.flag} Observatoire national • ${_city.country}',
+                style: const TextStyle(color: Colors.white60, fontSize: 11),
               ),
             ],
           ),
         ),
         InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _showAuthDialog,
+          onTap: () {
+            try {
+              FirebaseAuth.instance.signOut();
+            } catch (_) {}
+            setState(() {
+              _authIdentity = null;
+              _stage = _AppStage.login;
+            });
+          },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: _userName != null ? kGreen.withOpacity(0.16) : Colors.white.withOpacity(0.07),
+              color: kGreen.withOpacity(0.14),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _userName != null ? kGreen : kGold.withOpacity(0.5)),
+              border: Border.all(color: kGreen.withOpacity(0.55)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  _userName != null ? Icons.verified_user_rounded : Icons.person_outline_rounded,
-                  size: 14,
-                  color: _userName != null ? kGreen : kGold,
-                ),
+                const Icon(Icons.verified_user_rounded, size: 13, color: kGreen),
                 const SizedBox(width: 5),
-                Text(
-                  _userName ?? 'Connexion',
-                  style: TextStyle(
-                    color: _userName != null ? kGreen : kGold,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 110),
+                  child: Text(
+                    _authIdentity ?? 'Connecté',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: kGreen, fontSize: 10.5, fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
@@ -614,17 +971,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildQuickActionBar() {
+  Widget _buildLocationAndToolsBar() {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        // 1. Détection GPS automatique
         InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _gpsLoading ? null : _detectGps,
+          onTap: _gpsLoading ? null : _authorizeAndDetectGps,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
               color: kCyan.withOpacity(0.12),
               borderRadius: BorderRadius.circular(20),
@@ -634,52 +991,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (_gpsLoading)
-                  const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: kCyan),
-                  )
+                  const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kCyan))
                 else
-                  const Icon(Icons.my_location_rounded, size: 14, color: kCyan),
+                  const Icon(Icons.my_location_rounded, size: 13, color: kCyan),
                 const SizedBox(width: 6),
                 Text(
-                  _gpsLoading ? 'Localisation GPS…' : 'Ma position GPS',
+                  'GPS : ${_city.name} (${_city.country})',
                   style: const TextStyle(color: kCyan, fontSize: 11, fontWeight: FontWeight.w800),
                 ),
               ],
             ),
           ),
         ),
-        // 2. Accès direct aux 14 Régions du Sénégal
-        InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => setState(() => _tab = 3),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: kGold.withOpacity(0.14),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kGold.withOpacity(0.6)),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('🇸🇳', style: TextStyle(fontSize: 12)),
-                SizedBox(width: 6),
-                Text(
-                  '14 Régions & Point Sentinelle',
-                  style: TextStyle(color: kGold, fontSize: 11, fontWeight: FontWeight.w800),
-                ),
-              ],
-            ),
-          ),
-        ),
-        // 3. Export du Bulletin Officiel PDF / WhatsApp
         InkWell(
           borderRadius: BorderRadius.circular(20),
           onTap: _showBulletinDialog,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
             decoration: BoxDecoration(
               color: kViolet.withOpacity(0.15),
               borderRadius: BorderRadius.circular(20),
@@ -688,8 +1016,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.picture_as_pdf_rounded, size: 14, color: kViolet),
-                SizedBox(width: 6),
+                Icon(Icons.picture_as_pdf_rounded, size: 13, color: kViolet),
+                SizedBox(width: 5),
                 Text(
                   'Bulletin PDF',
                   style: TextStyle(color: kViolet, fontSize: 11, fontWeight: FontWeight.w800),
@@ -702,27 +1030,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildCitySelector() {
+  /// Barre horizontale affichant UNIQUEMENT les localités du pays de l'utilisateur
+  Widget _buildLocalCountryCitiesBar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SectionTitle("POINT D'OBSERVATION • SÉNÉGAL & AFRIQUE DE L'OUEST", icon: Icons.public_rounded),
+        SectionTitle(
+          'LOCALITÉS DE VOTRE PAYS • ${_city.country.toUpperCase()} (${_city.flag})',
+          icon: Icons.place_rounded,
+        ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 40,
+          height: 38,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            itemCount: kCities.length,
+            itemCount: _countryCities.length,
             separatorBuilder: (_, __) => const SizedBox(width: 8),
             itemBuilder: (context, i) {
-              final c = kCities[i];
+              final c = _countryCities[i];
               final sel = c.name == _city.name;
               return InkWell(
                 borderRadius: BorderRadius.circular(30),
                 onTap: () => _selectCity(c),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  duration: const Duration(milliseconds: 200),
+                  padding: const EdgeInsets.symmetric(horizontal: 13),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(30),
@@ -734,19 +1066,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ]),
                     border: Border.all(color: sel ? kGold : Colors.white.withOpacity(0.14)),
                   ),
-                  child: Row(
-                    children: [
-                      Text(c.flag, style: const TextStyle(fontSize: 14)),
-                      const SizedBox(width: 6),
-                      Text(
-                        c.name,
-                        style: TextStyle(
-                          color: sel ? kInk : Colors.white,
-                          fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
-                          fontSize: 12.5,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    c.name,
+                    style: TextStyle(
+                      color: sel ? kInk : Colors.white,
+                      fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               );
@@ -762,7 +1088,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       (0, Icons.nightlight_round, 'Ce soir • Observatoire'),
       (1, Icons.calendar_month_rounded, 'Calendrier Mensuel'),
       (2, Icons.mosque_rounded, 'Hilal & Ramadan'),
-      (3, Icons.map_rounded, '14 Régions & Pays'),
+      (3, Icons.map_rounded, '$_regionCount Régions (${_city.country})'),
     ];
     return Container(
       padding: const EdgeInsets.all(6),
@@ -830,7 +1156,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Column(
           children: [
             SizedBox(
-              height: 260,
+              height: 250,
               child: AnimatedBuilder(
                 animation: Listenable.merge([_float, _orbit, _pulse]),
                 builder: (context, _) {
@@ -838,11 +1164,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   return Stack(
                     alignment: Alignment.center,
                     children: [
-                      CustomPaint(size: const Size(340, 260), painter: OrbitPainter(_orbit.value)),
+                      CustomPaint(size: const Size(330, 250), painter: OrbitPainter(_orbit.value)),
                       Transform.translate(
                         offset: Offset(0, dy),
                         child: CustomPaint(
-                          size: const Size(190, 190),
+                          size: const Size(185, 185),
                           painter: MoonPainter(
                             illumination: illum,
                             waxing: waxing,
@@ -859,7 +1185,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               phase,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 24,
+                fontSize: 23,
                 fontWeight: FontWeight.w800,
                 color: Colors.white,
                 shadows: [Shadow(color: kGold, blurRadius: 18)],
@@ -909,14 +1235,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _buildDateControlBar(),
         if (_errorEvening != null) ...[
           const SizedBox(height: 14),
           ErrorBlock(_errorEvening!, onRetry: _loadEvening),
         ],
         if (d != null && !_loadingEvening) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           _buildSunMoonTimesBar(d),
           const SizedBox(height: 14),
           _buildCompassAndTurbulenceCard(d),
@@ -958,7 +1284,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(
             children: [
               CustomPaint(
-                size: const Size(118, 118),
+                size: const Size(112, 112),
                 painter: CompassPainter(moonAz: moonAz, sunAz: sunAz, moonAlt: moonAlt),
               ),
               const SizedBox(width: 14),
@@ -968,7 +1294,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   children: [
                     Text(
                       'Direction Lune : ${moonAz.toStringAsFixed(1)}° ($cardinal)',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -982,7 +1308,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(height: 3),
                     Text(
                       'Soleil : ${sunAz.toStringAsFixed(1)}°  •  Écart DAZ : ${daz.toStringAsFixed(1)}°',
-                      style: const TextStyle(color: Colors.white60, fontSize: 12),
+                      style: const TextStyle(color: Colors.white60, fontSize: 11.5),
                     ),
                     const SizedBox(height: 8),
                     Pill(
@@ -1391,7 +1717,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
                     ),
                     Text(
-                      '${_city.flag} ${_city.name} • Présence nocturne & phases',
+                      '${_city.flag} ${_city.name} (${_city.country}) • Présence nocturne & phases',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white60, fontSize: 11.5),
                     ),
@@ -1650,7 +1976,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ ONGLET 2 : HILAL & RAMADAN ═══════════════════════════
+  // ═══════════════════════════ ONGLET 2 : HILAL & RAMADAN (PAYS DE L'UTILISATEUR UNIQUEMENT) ═══════════════════════════
   Widget _buildHilalTab() {
     final selectors = [
       (9, '🕌 Ramadan'),
@@ -1695,14 +2021,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ErrorBlock(_errorHilal!, onRetry: _loadHilal),
         ],
         if (_loadingHilal)
-          const LoadingBlock('Simulation astronomique sur les villes d’Afrique de l’Ouest…')
+          LoadingBlock('Simulation astronomique pour ${_city.country}…')
         else if (h != null) ...[
           const SizedBox(height: 16),
           _buildConjunctionBanner(h),
           const SizedBox(height: 16),
           _buildCityEveningsDetail(h),
           const SizedBox(height: 16),
-          _buildWestAfricaComparisonTable(h),
+          _buildNationalCitiesComparisonTable(h),
         ],
       ],
     );
@@ -1719,7 +2045,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('DÉBUT DE ${hMonth.toString().toUpperCase()} $hYear H • ${_city.name.toUpperCase()}',
+          SectionTitle('DÉBUT DE ${hMonth.toString().toUpperCase()} $hYear H • ${_city.name.toUpperCase()} (${_city.country.toUpperCase()})',
               icon: Icons.mosque_rounded, color: kGold),
           const SizedBox(height: 10),
           Text(
@@ -1850,7 +2176,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildWestAfricaComparisonTable(Map<String, dynamic> h) {
+  Widget _buildNationalCitiesComparisonTable(Map<String, dynamic> h) {
     final cities = ((h['cities'] as List?) ?? []).cast<Map<String, dynamic>>();
     final evHeaders = ((h['evenings'] as List?) ?? []).cast<Map<String, dynamic>>();
 
@@ -1860,11 +2186,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('CARTE COMPARATIVE • CAPITALES D’AFRIQUE DE L’OUEST',
-              icon: Icons.public_rounded, color: kViolet),
+          SectionTitle('SYNTHÈSE NATIONALE • VILLES DE ${_city.country.toUpperCase()} (${_city.flag})',
+              icon: Icons.location_city_rounded, color: kViolet),
           const SizedBox(height: 10),
           ...cities.map((c) {
             final evs = ((c['evenings'] as List?) ?? []).cast<Map<String, dynamic>>();
+            final regLabel = (c['region'] as String?)?.isNotEmpty == true ? ' (Région de ${c['region']})' : '';
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(10),
@@ -1883,7 +2210,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     runSpacing: 6,
                     children: [
                       Text(
-                        '${c['flag']}  ${c['name']} (${c['country']})',
+                        '${c['flag']}  ${c['name']}$regLabel',
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.5),
                       ),
                       Pill('1er jour (œil nu) : ${c['start_naked_eye_label']}', kGreen),
@@ -1909,18 +2236,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ ONGLET 3 : 14 RÉGIONS DU SÉNÉGAL & PAYS (POINT SENTINELLE) ═══════════════════════════
+  // ═══════════════════════════ ONGLET 3 : RÉGIONS DU PAYS DE L'UTILISATEUR UNIQUEMENT ═══════════════════════════
   Widget _buildRegionsTab() {
-    final countries = [
-      ('SN', '🇸🇳 Sénégal (14 Régions)'),
-      ('ML', '🇲🇱 Mali'),
-      ('MR', '🇲🇷 Mauritanie'),
-      ('CI', "🇨🇮 Côte d'Ivoire"),
-      ('GN', '🇬🇳 Guinée'),
-      ('BF', '🇧🇫 Burkina Faso'),
-      ('NE', '🇳🇪 Niger'),
-      ('WORLD', '🌍 Monde & Lieux Saints'),
-    ];
     final months = [
       (9, '🕌 Ramadan'),
       (10, '🌙 Korité / Chawwal'),
@@ -1932,45 +2249,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 1. Sélecteur de Pays
-        const SectionTitle('CHOISIR UN PAYS OU OBSERVATOIRE MONDIAL', icon: Icons.flag_rounded),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: countries.map((c) {
-            final sel = _selectedCountryCode == c.$1;
-            return InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () {
-                setState(() => _selectedCountryCode = c.$1);
-                _loadRegions();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  gradient: sel ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
-                  color: sel ? null : const Color(0xFF14183A).withOpacity(0.8),
-                  border: Border.all(color: sel ? kGold : Colors.white24),
-                ),
-                child: Text(
-                  c.$2,
-                  style: TextStyle(color: sel ? kInk : Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: 12),
-
-        // 2. Sélecteur de Mois & Soirée (J0, J+1, J+2)
+        // Sélecteur de Mois & Soirée (J0, J+1, J+2) pour le pays de l'utilisateur
         Glass(
           accent: kCyan,
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              SectionTitle(
+                'OBSERVATOIRE RÉGIONAL • ${_city.country.toUpperCase()} (${_city.flag})',
+                icon: Icons.map_rounded,
+                color: kCyan,
+              ),
+              const SizedBox(height: 10),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -2047,7 +2338,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ],
 
         if (_loadingRegions)
-          const LoadingBlock('Scan astronomique de toutes les régions, villes et villages…')
+          LoadingBlock('Scan astronomique des $_regionCount régions de ${_city.country}…')
         else if (r != null) ...[
           const SizedBox(height: 16),
           _buildSentinelRuleCard(r),
@@ -2069,7 +2360,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('RÈGLE D’OR ASTRONOMIQUE & POINT SENTINELLE DU PAYS', icon: Icons.emoji_events_rounded, color: col),
+          SectionTitle('RÈGLE D’OR ASTRONOMIQUE & POINT SENTINELLE (${_city.country.toUpperCase()})',
+              icon: Icons.emoji_events_rounded, color: col),
           const SizedBox(height: 8),
           Text(
             (r['rule_title'] as String?) ?? '',
@@ -2135,13 +2427,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildRegionsBreakdown(Map<String, dynamic> r) {
     final regs = ((r['regions'] as List?) ?? []).cast<Map<String, dynamic>>();
-    final flag = (r['flag'] as String?) ?? '🇸🇳';
-    final cname = (r['country_name'] as String?) ?? 'Sénégal';
+    final flag = (r['flag'] as String?) ?? _city.flag;
+    final cname = (r['country_name'] as String?) ?? _city.country;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SectionTitle('DÉTAIL PAR RÉGION, DÉPARTEMENT, VILLE & FOYER RELIGIEUX ($flag $cname)',
+        SectionTitle('LES $_regionCount RÉGIONS & LOCALITÉS ($flag $cname)',
             icon: Icons.location_city_rounded, color: kGold),
         const SizedBox(height: 10),
         ...regs.map((reg) {
@@ -2182,10 +2474,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             (l['name'] as String?) ?? '',
                             cname.split(' (').first,
                             flag,
-                            toD(l['lat']) ?? 14.69,
-                            toD(l['lon']) ?? -17.44,
-                            toD(l['tz']) ?? 0,
-                            _selectedCountryCode,
+                            toD(l['lat']) ?? _city.lat,
+                            toD(l['lon']) ?? _city.lon,
+                            toD(l['tz']) ?? _city.tz,
+                            _city.countryCode,
+                            (reg['region'] as String?) ?? '',
                           );
                           final parsedDate = DateTime.tryParse((r['date'] as String?) ?? '');
                           setState(() {
@@ -2245,133 +2538,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ BOÎTES DE DIALOGUE (CONNEXION & BULLETIN PDF) ═══════════════════════════
-  void _showAuthDialog() {
-    final nameCtrl = TextEditingController(text: _userName ?? '');
-    final emailCtrl = TextEditingController(text: _userEmail ?? '');
-    final passCtrl = TextEditingController();
-    City favCity = _city;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => AlertDialog(
-          backgroundColor: const Color(0xFF101432),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: BorderSide(color: kGold.withOpacity(0.45)),
-          ),
-          title: const Row(
-            children: [
-              Icon(Icons.person_pin_rounded, color: kGold),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Compte Observateur WeerWi',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
-                ),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Connectez-vous pour enregistrer votre ville favorite et personnaliser vos bulletins astronomiques.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12.5),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom ou Titre (ex: Astronaute Diop)',
-                    prefixIcon: Icon(Icons.badge_rounded, color: kGold),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: emailCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Adresse Email',
-                    prefixIcon: Icon(Icons.email_rounded, color: kCyan),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: passCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Mot de passe',
-                    prefixIcon: Icon(Icons.lock_rounded, color: kViolet),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                DropdownButtonFormField<City>(
-                  value: kCities.contains(favCity) ? favCity : kCities.first,
-                  dropdownColor: const Color(0xFF161B42),
-                  decoration: const InputDecoration(labelText: 'Localité favorite par défaut'),
-                  items: kCities
-                      .map((c) => DropdownMenuItem(value: c, child: Text('${c.flag} ${c.name} (${c.country})')))
-                      .toList(),
-                  onChanged: (c) {
-                    if (c != null) setModalState(() => favCity = c);
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            if (_userName != null)
-              TextButton(
-                onPressed: () {
-                  try {
-                    FirebaseAuth.instance.signOut();
-                  } catch (_) {}
-                  setState(() {
-                    _userName = null;
-                    _userEmail = null;
-                  });
-                  Navigator.pop(ctx);
-                },
-                child: const Text('Déconnexion', style: TextStyle(color: kRed)),
-              ),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Fermer', style: TextStyle(color: Colors.white60)),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: kGold, foregroundColor: kInk),
-              onPressed: () async {
-                final name = nameCtrl.text.trim().isEmpty ? 'Observateur' : nameCtrl.text.trim();
-                final email = emailCtrl.text.trim();
-                final pass = passCtrl.text.trim();
-                if (email.isNotEmpty && pass.length >= 6) {
-                  try {
-                    await FirebaseAuth.instance.signInWithEmailAndPassword(email: email, password: pass);
-                  } catch (_) {
-                    try {
-                      await FirebaseAuth.instance.createUserWithEmailAndPassword(email: email, password: pass);
-                    } catch (_) {}
-                  }
-                }
-                setState(() {
-                  _userName = name;
-                  _userEmail = email;
-                });
-                _selectCity(favCity);
-                if (ctx.mounted) Navigator.pop(ctx);
-              },
-              icon: const Icon(Icons.check_circle_rounded, size: 16),
-              label: const Text('Valider & Connecter', style: TextStyle(fontWeight: FontWeight.w900)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
+  // ═══════════════════════════ BULLETIN OFFICIEL PDF / WHATSAPP ═══════════════════════════
   void _showBulletinDialog() {
     final d = _eveningData;
     final r = _regionsData;
@@ -2389,7 +2556,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 🌓 Phase : ${d?['phase'] ?? '—'} (${d?['illumination'] ?? '—'}%) • Âge : ${d?['age_hours'] ?? '—'} h
 🌪️ Atmosphère : ${d?['turbulence_level'] ?? '—'}
 
-🏆 Point Sentinelle (${r?['country_name'] ?? _city.country}) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
+🏆 Point Sentinelle (${_city.country}) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
 📌 Synthèse : ${d?['observation_tip'] ?? ''}
 🕌 Contexte : ${d?['ramadan_status'] ?? ''}
 (Source : WeerWi • Éphémérides NASA JPL DE421 • Critères de Yallop & Odeh)''';
@@ -2432,9 +2599,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Lien du Bulletin PDF complet (14 régions & tableau officiel imprimable) :',
-                style: TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.bold),
+              Text(
+                'Lien du Bulletin PDF complet ($_regionCount régions de ${_city.country}) :',
+                style: const TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
               SelectableText(url, style: const TextStyle(color: Colors.white70, fontSize: 11)),
@@ -2451,7 +2618,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             onPressed: () {
               Clipboard.setData(ClipboardData(text: url));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Lien du Bulletin PDF copié ! Ouvrez-le dans un onglet pour imprimer en PDF.')),
+                const SnackBar(content: Text('Lien du Bulletin PDF copié !')),
               );
             },
             icon: const Icon(Icons.link_rounded, size: 16),
@@ -2463,7 +2630,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Clipboard.setData(ClipboardData(text: reportText));
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('📋 Bulletin copié dans le presse-papiers (prêt pour WhatsApp / Partage) !')),
+                const SnackBar(content: Text('📋 Bulletin copié dans le presse-papiers !')),
               );
             },
             icon: const Icon(Icons.copy_rounded, size: 16),
@@ -2479,14 +2646,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       children: [
         Text('✦  ✦  ✦', style: TextStyle(color: kGold.withOpacity(0.5), letterSpacing: 6)),
         const SizedBox(height: 6),
-        const Text(
-          'WeerWi — la science exacte de l’astronomie au service de toute la communauté.',
+        Text(
+          'WeerWi • Observatoire astronomique national (${_city.country})',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white38, fontSize: 10.5),
+          style: const TextStyle(color: Colors.white38, fontSize: 10.5),
         ),
         const SizedBox(height: 2),
         const Text(
-          'Éphémérides NASA JPL DE421 · Critères de Yallop (1997) & Odeh (2004) · 14 Régions du Sénégal & Monde',
+          'Éphémérides NASA JPL DE421 · Critères de Yallop (1997) & Odeh (2004) · Météo Open-Meteo',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.white24, fontSize: 9.5),
         ),

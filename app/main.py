@@ -187,18 +187,20 @@ async def _with_weather(res):
 
 
 @app.get("/hilal")
-async def hilal(lat: float, lon: float, date: Optional[str] = None, utc_offset: Optional[float] = None):
-    """Prochaine nouvelle lune à partir d'une date : visibilité du croissant sur 3 soirées, toutes villes."""
-    res = await asyncio.to_thread(astro.hilal_analysis, lat, lon, _offset(utc_offset, lon), _parse_date(date))
+async def hilal(lat: float, lon: float, date: Optional[str] = None, utc_offset: Optional[float] = None,
+                country_code: str = Query("SN")):
+    """Prochaine nouvelle lune à partir d'une date : visibilité du croissant sur 3 soirées pour le pays de l'utilisateur."""
+    res = await asyncio.to_thread(astro.hilal_analysis, lat, lon, _offset(utc_offset, lon), _parse_date(date), country_code)
     return await _with_weather(res)
 
 
 @app.get("/hijri-month")
 async def hijri_month(lat: float, lon: float, month: int = Query(9, ge=1, le=12),
-                      utc_offset: Optional[float] = None, date: Optional[str] = None):
-    """Début d'un mois hégirien donné (9 = Ramadan, 10 = Chawwal/Aïd el-Fitr, 12 = Dhou al-Hijja)."""
+                      utc_offset: Optional[float] = None, date: Optional[str] = None,
+                      country_code: str = Query("SN")):
+    """Début d'un mois hégirien donné (9 = Ramadan, 10 = Chawwal/Aïd el-Fitr, 12 = Dhou al-Hijja) pour le pays de l'utilisateur."""
     res = await asyncio.to_thread(astro.hijri_month_analysis, lat, lon, _offset(utc_offset, lon), month,
-                                  _parse_date(date))
+                                  _parse_date(date), country_code)
     return await _with_weather(res)
 
 

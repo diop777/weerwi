@@ -4,27 +4,51 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 class City {
-  final String name, country, flag, countryCode;
+  final String name, region, country, flag, countryCode;
   final double lat, lon, tz;
-  const City(this.name, this.country, this.flag, this.lat, this.lon, this.tz, [this.countryCode = 'SN']);
+  const City(
+    this.name,
+    this.country,
+    this.flag,
+    this.lat,
+    this.lon,
+    this.tz, [
+    this.countryCode = 'SN',
+    this.region = 'Dakar',
+  ]);
+
+  factory City.fromJson(Map<String, dynamic> j) {
+    return City(
+      (j['name'] as String?) ?? 'Dakar',
+      (j['country'] as String?) ?? 'Sénégal',
+      (j['flag'] as String?) ?? '🇸🇳',
+      toD(j['lat']) ?? 14.6937,
+      toD(j['lon']) ?? -17.4441,
+      toD(j['tz']) ?? 0,
+      (j['country_code'] as String?) ?? 'SN',
+      (j['region'] as String?) ?? '',
+    );
+  }
 }
 
-const List<City> kCities = [
-  City('Dakar', 'Sénégal', '🇸🇳', 14.6937, -17.4441, 0, 'SN'),
-  City('Touba', 'Sénégal', '🇸🇳', 14.8647, -15.8756, 0, 'SN'),
-  City('Tivaouane', 'Sénégal', '🇸🇳', 14.9514, -16.8189, 0, 'SN'),
-  City('Kaolack', 'Sénégal', '🇸🇳', 14.1520, -16.0726, 0, 'SN'),
-  City('Saint-Louis', 'Sénégal', '🇸🇳', 16.0179, -16.4896, 0, 'SN'),
-  City('Ziguinchor', 'Sénégal', '🇸🇳', 12.5681, -16.2719, 0, 'SN'),
-  City('Nouakchott', 'Mauritanie', '🇲🇷', 18.0735, -15.9582, 0, 'MR'),
-  City('Banjul', 'Gambie', '🇬🇲', 13.4549, -16.5790, 0, 'SN'),
-  City('Conakry', 'Guinée', '🇬🇳', 9.6412, -13.5784, 0, 'GN'),
-  City('Bamako', 'Mali', '🇲🇱', 12.6392, -8.0029, 0, 'ML'),
-  City('Abidjan', "Côte d'Ivoire", '🇨🇮', 5.3600, -4.0083, 0, 'CI'),
-  City('Ouagadougou', 'Burkina Faso', '🇧🇫', 12.3714, -1.5197, 0, 'BF'),
-  City('Lomé', 'Togo', '🇹🇬', 6.1375, 1.2125, 0, 'SN'),
-  City('Cotonou', 'Bénin', '🇧🇯', 6.3654, 2.4183, 1, 'SN'),
-  City('Niamey', 'Niger', '🇳🇪', 13.5116, 2.1254, 1, 'NE'),
+/// Villes du pays par défaut (Sénégal - 14 Régions & Cités religieuses) avant ou après détection GPS locale
+const List<City> kDefaultCountryCities = [
+  City('Dakar', 'Sénégal', '🇸🇳', 14.6937, -17.4441, 0, 'SN', 'Dakar'),
+  City('Touba', 'Sénégal', '🇸🇳', 14.8647, -15.8756, 0, 'SN', 'Diourbel'),
+  City('Tivaouane', 'Sénégal', '🇸🇳', 14.9514, -16.8189, 0, 'SN', 'Thiès'),
+  City('Thiès', 'Sénégal', '🇸🇳', 14.7886, -16.9260, 0, 'SN', 'Thiès'),
+  City('Saint-Louis', 'Sénégal', '🇸🇳', 16.0179, -16.4896, 0, 'SN', 'Saint-Louis'),
+  City('Kaolack', 'Sénégal', '🇸🇳', 14.1520, -16.0726, 0, 'SN', 'Kaolack'),
+  City('Diourbel', 'Sénégal', '🇸🇳', 14.6550, -16.2314, 0, 'SN', 'Diourbel'),
+  City('Louga', 'Sénégal', '🇸🇳', 15.6186, -16.2244, 0, 'SN', 'Louga'),
+  City('Fatick', 'Sénégal', '🇸🇳', 14.3390, -16.4111, 0, 'SN', 'Fatick'),
+  City('Kaffrine', 'Sénégal', '🇸🇳', 14.1059, -15.5508, 0, 'SN', 'Kaffrine'),
+  City('Matam', 'Sénégal', '🇸🇳', 15.6559, -13.2554, 0, 'SN', 'Matam'),
+  City('Tambacounda', 'Sénégal', '🇸🇳', 13.7707, -13.6673, 0, 'SN', 'Tambacounda'),
+  City('Kédougou', 'Sénégal', '🇸🇳', 12.5579, -12.1743, 0, 'SN', 'Kédougou'),
+  City('Kolda', 'Sénégal', '🇸🇳', 12.8939, -14.9412, 0, 'SN', 'Kolda'),
+  City('Sédhiou', 'Sénégal', '🇸🇳', 12.7081, -15.5569, 0, 'SN', 'Sédhiou'),
+  City('Ziguinchor', 'Sénégal', '🇸🇳', 12.5681, -16.2719, 0, 'SN', 'Ziguinchor'),
 ];
 
 const kMonthsFr = [
@@ -80,14 +104,26 @@ class Api {
 
   static Future<Map<String, dynamic>> hilal(City c, DateTime from) async {
     final r = await http
-        .get(buildUri('/hilal', {'lat': '${c.lat}', 'lon': '${c.lon}', 'date': isoDate(from), 'utc_offset': '${c.tz}'}))
+        .get(buildUri('/hilal', {
+          'lat': '${c.lat}',
+          'lon': '${c.lon}',
+          'date': isoDate(from),
+          'utc_offset': '${c.tz}',
+          'country_code': c.countryCode,
+        }))
         .timeout(const Duration(seconds: 90));
     return _decode(r);
   }
 
   static Future<Map<String, dynamic>> hijriMonth(City c, int month) async {
     final r = await http
-        .get(buildUri('/hijri-month', {'lat': '${c.lat}', 'lon': '${c.lon}', 'month': '$month', 'utc_offset': '${c.tz}'}))
+        .get(buildUri('/hijri-month', {
+          'lat': '${c.lat}',
+          'lon': '${c.lon}',
+          'month': '$month',
+          'utc_offset': '${c.tz}',
+          'country_code': c.countryCode,
+        }))
         .timeout(const Duration(seconds: 90));
     return _decode(r);
   }
