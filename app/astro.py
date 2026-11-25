@@ -981,8 +981,9 @@ def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, da
         "total": len(all_locs),
     }
 
+    clean_country = cat["name"].split(" (")[0]
     if sentinel["verdict_code"] == "not_visible":
-        rule_title = f"IMPOSSIBLE À VOIR DANS TOUT LE PAYS ({cat['name']})"
+        rule_title = f"IMPOSSIBLE À VOIR DANS TOUT LE PAYS ({clean_country})"
         rule_text = (
             f"Le point géographiquement le plus favorable est {sentinel['name']} (Région de {sentinel['region']}). "
             f"Même en ce Point Sentinelle, le croissant est scientifiquement invisible "
@@ -992,14 +993,14 @@ def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, da
         )
         rule_level = "bad"
     elif counts["naked_eye"] == counts["total"]:
-        rule_title = f"VISIBLE À L'ŒIL NU DANS TOUTES LES RÉGIONS ({cat['name']})"
+        rule_title = f"VISIBLE À L'ŒIL NU DANS TOUTES LES RÉGIONS ({clean_country})"
         rule_text = (
             f"Le croissant est visible à l'œil nu dans les {counts['total']} localités analysées "
             f"(du Point Sentinelle {sentinel['name']} jusqu'à {worst['name']}), sous réserve d'un ciel dégagé."
         )
         rule_level = "good"
     else:
-        rule_title = f"VISIBILITÉ DIFFÉRENCIÉE SELON LES RÉGIONS ({cat['name']})"
+        rule_title = f"VISIBILITÉ DIFFÉRENCIÉE SELON LES RÉGIONS ({clean_country})"
         rule_text = (
             f"Le Point Sentinelle le plus favorable est {sentinel['name']} ({sentinel['region']}) avec "
             f"V = {sentinel['odeh_v'] if sentinel['odeh_v'] is not None else '—'} ({sentinel['verdict_text']}). "

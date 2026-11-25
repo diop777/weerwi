@@ -37,6 +37,8 @@ class WeerWiApp extends StatelessWidget {
 
 enum _AppStage { login, verifyOtp, locationPermission, ready }
 
+enum _PhoneModal { none, dialPicker, profile, bulletin, guestRestriction }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -45,17 +47,16 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  // Parcours d'entrée : 1) Connexion / Création de compte -> 2) Code OTP (si création) -> 3) Autorisation GPS -> 4) Observatoire
   _AppStage _stage = _AppStage.login;
-  bool _isSignUp = false; // false = Se connecter, true = Créer un compte
+  _PhoneModal _modal = _PhoneModal.none;
+  bool _isSignUp = false;
   bool _loginWithPhone = true;
   bool _obscurePassword = true;
   bool _isGuest = false;
   bool _authBusy = false;
 
-  // Sélecteur d'indicatif téléphonique (les 16 pays d'Afrique de l'Ouest)
-  DialCountry _dialCountry = kWestAfricaDialCodes[0]; // +221 Sénégal par défaut
-  String? _preferredCountryCode; // pays choisi lors de la connexion téléphonique
+  DialCountry _dialCountry = kWestAfricaDialCodes[0];
+  String? _preferredCountryCode;
 
   final TextEditingController _firstNameCtrl = TextEditingController();
   final TextEditingController _lastNameCtrl = TextEditingController();
@@ -63,6 +64,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
   final TextEditingController _otpCtrl = TextEditingController();
+  final ScrollController _mainScrollCtrl = ScrollController();
 
   String? _authIdentity;
   String? _userFullName;
@@ -71,7 +73,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _otpPreviewCode;
   String? _authError;
 
-  // Localisation détectée & villes du pays de l'utilisateur uniquement
   City _city = kDefaultCountryCities[0];
   List<City> _countryCities = kDefaultCountryCities;
   int _regionCount = 14;
@@ -127,10 +128,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     _otpCtrl.dispose();
+    _mainScrollCtrl.dispose();
     _float.dispose();
     _orbit.dispose();
     _pulse.dispose();
     super.dispose();
+  }
+
+  void _switchTab(int newTab) {
+    setState(() => _tab = newTab);
+    if (_mainScrollCtrl.hasClients) {
+      _mainScrollCtrl.jumpTo(0);
+    }
   }
 
   // ─────────────────────────── Étape 1 : Connexion / Création de Compte ───────────────────────────
@@ -141,11 +150,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final lastName = _lastNameCtrl.text.trim();
     final pass = _passCtrl.text.trim();
 
-    if (_isSignUp) {
-      if (firstName.isEmpty || lastName.isEmpty) {
-        setState(() => _authError = 'Veuillez renseigner votre prénom et votre nom.');
-        return;
-      }
+    if (_isSignUp && (firstName.isEmpty || lastName.isEmpty)) {
+      setState(() => _authError = 'Veuillez renseigner votre prénom et votre nom.');
+      return;
     }
 
     String contact;
@@ -171,12 +178,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     if (pass.length < 4) {
-      setState(() => _authError = 'Veuillez définir un mot de passe (minimum 4 caractères).');
+      setState(() => _authError = 'Veuillez définir un mot de passe (4 caractères min.).');
       return;
     }
 
     if (_isSignUp) {
-      // Création de compte : envoi d'un code de vérification à 6 chiffres par SMS ou E-mail
       setState(() => _authBusy = true);
       try {
         final res = await Api.sendOtp(
@@ -194,14 +200,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           _otpCtrl.clear();
           _stage = _AppStage.verifyOtp;
         });
-      } catch (e) {
+      } catch (_) {
         if (!mounted) return;
         setState(() => _authError = "Impossible d'envoyer le code de vérification.");
       } finally {
         if (mounted) setState(() => _authBusy = false);
       }
     } else {
-      // Connexion directe d'un utilisateur existant
       if (!_loginWithPhone) {
         try {
           await FirebaseAuth.instance.signInWithEmailAndPassword(email: contact, password: pass);
@@ -242,7 +247,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _authError = 'Code de vérification incorrect. Vérifiez le code reçu.');
+      setState(() => _authError = 'Code de vérification incorrect.');
     } finally {
       if (mounted) setState(() => _authBusy = false);
     }
@@ -261,9 +266,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         channel: _pendingChannel,
       );
       if (!mounted) return;
-      setState(() {
-        _otpPreviewCode = (res['code_preview'] as String?) ?? '';
-      });
+      setState(() => _otpPreviewCode = (res['code_preview'] as String?) ?? '');
     } catch (_) {
       if (!mounted) return;
       setState(() => _authError = 'Impossible de renvoyer le code.');
@@ -350,7 +353,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       final res = await Api.evening(_city, _date);
       if (mounted) setState(() => _eveningData = res);
-    } catch (e) {
+    } catch (_) {
       if (mounted) setState(() => _errorEvening = 'Impossible de charger les données de la soirée.');
     } finally {
       if (mounted) setState(() => _loadingEvening = false);
@@ -377,7 +380,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           }
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) setState(() => _errorMonth = 'Impossible de charger le calendrier mensuel.');
     } finally {
       if (mounted) setState(() => _loadingMonth = false);
@@ -394,7 +397,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ? await Api.hilal(_city, DateTime.now())
           : await Api.hijriMonth(_city, _targetHijriMonth);
       if (mounted) setState(() => _hilalData = res);
-    } catch (e) {
+    } catch (_) {
       if (mounted) setState(() => _errorHilal = 'Impossible de charger les prévisions du Hilal.');
     } finally {
       if (mounted) setState(() => _loadingHilal = false);
@@ -420,7 +423,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           if (regs.isNotEmpty) _regionCount = regs.length;
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) setState(() => _errorRegions = 'Impossible de charger les régions.');
     } finally {
       if (mounted) setState(() => _loadingRegions = false);
@@ -452,7 +455,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Expanded(
                   child: showPhoneFrame
                       ? Center(child: _buildAndroidVirtualPhone())
-                      : _buildStageContent(inPhone: false),
+                      : Stack(
+                          children: [
+                            _buildStageContent(inPhone: false),
+                            if (_modal != _PhoneModal.none) _buildInScreenModalOverlay(),
+                          ],
+                        ),
                 ),
               ],
             ),
@@ -517,6 +525,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildAndroidVirtualPhone() {
+    final hasBottomNav = _stage == _AppStage.ready;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: FittedBox(
@@ -569,18 +578,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     child: Stack(
                       children: [
                         const Positioned.fill(child: CosmicBackground()),
-                        const Positioned(
+                        Positioned(
                           left: 0,
                           right: 0,
-                          bottom: 58,
-                          height: 150,
-                          child: IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
+                          bottom: hasBottomNav ? 58 : 0,
+                          height: 155,
+                          child: const IgnorePointer(child: CustomPaint(painter: HorizonPainter())),
                         ),
                         Column(
                           children: [
                             _buildAndroidStatusBar(),
-                            Expanded(child: _buildStageContent(inPhone: true)),
-                            if (_stage == _AppStage.ready) _buildAndroidBottomNav(),
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  _buildStageContent(inPhone: true),
+                                  if (_modal != _PhoneModal.none) _buildInScreenModalOverlay(),
+                                ],
+                              ),
+                            ),
+                            if (hasBottomNav) _buildAndroidBottomNav(),
                           ],
                         ),
                       ],
@@ -608,18 +624,56 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  // ─────────────────────────── Champ de saisie uniforme (46px) ───────────────────────────
+  Widget _uniformTextField({
+    required TextEditingController controller,
+    required String hint,
+    IconData? prefixIcon,
+    Color prefixColor = kGold,
+    Widget? suffix,
+    bool obscure = false,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return SizedBox(
+      height: 46,
+      child: TextField(
+        controller: controller,
+        obscureText: obscure,
+        keyboardType: keyboardType,
+        style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w500),
+        decoration: InputDecoration(
+          hintText: hint,
+          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+          prefixIcon: prefixIcon != null ? Icon(prefixIcon, color: prefixColor, size: 18) : null,
+          prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 46),
+          suffixIcon: suffix,
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.05),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.16), width: 1),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: kGold, width: 1.4),
+          ),
+        ),
+      ),
+    );
+  }
+
   // ═══════════════════════════ ÉCRAN 1 : CONNEXION & CRÉATION DE COMPTE ═══════════════════════════
   Widget _buildLoginScreen({required bool inPhone}) {
     return SingleChildScrollView(
-      padding: EdgeInsets.symmetric(horizontal: inPhone ? 18 : 28, vertical: 16),
+      padding: EdgeInsets.fromLTRB(inPhone ? 18 : 28, 12, inPhone ? 18 : 28, 28),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Column(
             children: [
-              // Lune lumineuse d'accueil
               SizedBox(
-                height: 120,
+                height: 112,
                 child: AnimatedBuilder(
                   animation: Listenable.merge([_float, _pulse]),
                   builder: (context, _) {
@@ -627,7 +681,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     return Transform.translate(
                       offset: Offset(0, dy),
                       child: CustomPaint(
-                        size: const Size(115, 115),
+                        size: const Size(106, 106),
                         painter: MoonPainter(illumination: 24, waxing: true, glow: 0.7 + 0.3 * _pulse.value),
                       ),
                     );
@@ -638,16 +692,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 shaderCallback: (b) => const LinearGradient(colors: [kGold, Colors.white, kCyan]).createShader(b),
                 child: const Text(
                   'WeerWi',
-                  style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 3),
+                  style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 2.8),
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               const Text(
                 'Observatoire scientifique du croissant lunaire',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                style: TextStyle(color: Colors.white70, fontSize: 12),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
 
               Glass(
                 accent: kGold,
@@ -657,30 +711,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   children: [
                     // Sélecteur : Se connecter | Créer un compte
                     Container(
+                      height: 42,
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         color: Colors.black.withOpacity(0.35),
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: Colors.white12),
                       ),
                       child: Row(
                         children: [
                           Expanded(
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(10),
                               onTap: () => setState(() {
                                 _isSignUp = false;
                                 _authError = null;
                               }),
                               child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(10),
                                   gradient: !_isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
                                 child: Text(
                                   'Se connecter',
-                                  textAlign: TextAlign.center,
                                   style: TextStyle(
                                     color: !_isSignUp ? kInk : Colors.white70,
                                     fontWeight: FontWeight.w900,
@@ -692,20 +746,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                           Expanded(
                             child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(10),
                               onTap: () => setState(() {
                                 _isSignUp = true;
                                 _authError = null;
                               }),
                               child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(10),
                                   gradient: _isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
                                 child: Text(
                                   'Créer un compte',
-                                  textAlign: TextAlign.center,
                                   style: TextStyle(
                                     color: _isSignUp ? kInk : Colors.white70,
                                     fontWeight: FontWeight.w900,
@@ -718,42 +771,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
 
                     // Prénom & Nom uniquement lors de la création de compte
                     if (_isSignUp) ...[
                       Row(
                         children: [
                           Expanded(
-                            child: TextField(
+                            child: _uniformTextField(
                               controller: _firstNameCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 13.5),
-                              decoration: InputDecoration(
-                                labelText: 'Prénom',
-                                isDense: true,
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.05),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
+                              hint: 'Prénom',
+                              prefixIcon: Icons.person_outline_rounded,
                             ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
-                            child: TextField(
+                            child: _uniformTextField(
                               controller: _lastNameCtrl,
-                              style: const TextStyle(color: Colors.white, fontSize: 13.5),
-                              decoration: InputDecoration(
-                                labelText: 'Nom',
-                                isDense: true,
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.05),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
+                              hint: 'Nom',
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                     ],
 
                     // Bascule Téléphone / E-mail
@@ -767,10 +807,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               _authError = null;
                             }),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              height: 36,
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(10),
-                                color: _loginWithPhone ? kCyan.withOpacity(0.18) : Colors.white.withOpacity(0.04),
+                                color: _loginWithPhone ? kCyan.withOpacity(0.16) : Colors.white.withOpacity(0.04),
                                 border: Border.all(color: _loginWithPhone ? kCyan : Colors.white12),
                               ),
                               child: Row(
@@ -778,7 +818,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                 children: [
                                   Icon(Icons.phone_iphone_rounded,
                                       size: 15, color: _loginWithPhone ? kCyan : Colors.white60),
-                                  const SizedBox(width: 5),
+                                  const SizedBox(width: 6),
                                   Text(
                                     'Par Téléphone',
                                     style: TextStyle(
@@ -792,7 +832,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: InkWell(
                             borderRadius: BorderRadius.circular(10),
@@ -801,10 +841,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               _authError = null;
                             }),
                             child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              height: 36,
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(10),
-                                color: !_loginWithPhone ? kCyan.withOpacity(0.18) : Colors.white.withOpacity(0.04),
+                                color: !_loginWithPhone ? kCyan.withOpacity(0.16) : Colors.white.withOpacity(0.04),
                                 border: Border.all(color: !_loginWithPhone ? kCyan : Colors.white12),
                               ),
                               child: Row(
@@ -812,7 +852,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                 children: [
                                   Icon(Icons.mail_outline_rounded,
                                       size: 15, color: !_loginWithPhone ? kCyan : Colors.white60),
-                                  const SizedBox(width: 5),
+                                  const SizedBox(width: 6),
                                   Text(
                                     'Par E-mail',
                                     style: TextStyle(
@@ -828,166 +868,152 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
 
                     if (_loginWithPhone) ...[
-                      // Sélecteur d'indicatif des 16 pays d'Afrique de l'Ouest + numéro
+                      // Sélecteur d'indicatif (46px exact) + Champ numéro (46px exact)
                       Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           InkWell(
                             borderRadius: BorderRadius.circular(12),
-                            onTap: _showDialCountryPicker,
+                            onTap: () => setState(() => _modal = _PhoneModal.dialPicker),
                             child: Container(
-                              height: 50,
+                              height: 46,
                               padding: const EdgeInsets.symmetric(horizontal: 10),
                               decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.07),
+                                color: Colors.white.withOpacity(0.05),
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: kGold.withOpacity(0.55)),
+                                border: Border.all(color: kGold.withOpacity(0.55), width: 1),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text(_dialCountry.flag, style: const TextStyle(fontSize: 17)),
+                                  Text(_dialCountry.flag, style: const TextStyle(fontSize: 16)),
                                   const SizedBox(width: 6),
                                   Text(
                                     _dialCountry.dial,
                                     style: const TextStyle(
                                       color: kGold,
                                       fontWeight: FontWeight.w900,
-                                      fontSize: 13.5,
+                                      fontSize: 13,
                                     ),
                                   ),
                                   const SizedBox(width: 2),
-                                  const Icon(Icons.arrow_drop_down_rounded, color: Colors.white70, size: 18),
+                                  const Icon(Icons.expand_more_rounded, color: Colors.white70, size: 17),
                                 ],
                               ),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: TextField(
+                            child: _uniformTextField(
                               controller: _phoneCtrl,
+                              hint: 'Numéro (${_dialCountry.name})',
                               keyboardType: TextInputType.phone,
-                              style: const TextStyle(color: Colors.white, fontSize: 14),
-                              decoration: InputDecoration(
-                                labelText: 'Numéro (${_dialCountry.name})',
-                                hintText: '77 000 00 00',
-                                isDense: true,
-                                filled: true,
-                                fillColor: Colors.white.withOpacity(0.05),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                              ),
                             ),
                           ),
                         ],
                       ),
                     ] else ...[
-                      TextField(
+                      _uniformTextField(
                         controller: _emailCtrl,
+                        hint: 'Adresse e-mail (exemple@email.com)',
+                        prefixIcon: Icons.mail_outline_rounded,
+                        prefixColor: kCyan,
                         keyboardType: TextInputType.emailAddress,
-                        style: const TextStyle(color: Colors.white, fontSize: 14),
-                        decoration: InputDecoration(
-                          labelText: 'Adresse e-mail',
-                          hintText: 'exemple@email.com',
-                          isDense: true,
-                          prefixIcon: const Icon(Icons.mail_outline_rounded, color: kCyan, size: 19),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
                       ),
                     ],
 
-                    const SizedBox(height: 12),
-                    TextField(
+                    const SizedBox(height: 10),
+                    _uniformTextField(
                       controller: _passCtrl,
-                      obscureText: _obscurePassword,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: InputDecoration(
-                        labelText: _isSignUp ? 'Créer un mot de passe' : 'Mot de passe',
-                        isDense: true,
-                        prefixIcon: const Icon(Icons.lock_outline_rounded, color: kViolet, size: 19),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                            color: Colors.white54,
-                            size: 18,
-                          ),
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      hint: _isSignUp ? 'Créer un mot de passe' : 'Mot de passe',
+                      prefixIcon: Icons.lock_outline_rounded,
+                      prefixColor: kViolet,
+                      obscure: _obscurePassword,
+                      suffix: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                          color: Colors.white54,
+                          size: 17,
                         ),
-                        filled: true,
-                        fillColor: Colors.white.withOpacity(0.05),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                       ),
                     ),
 
                     if (_authError != null) ...[
-                      const SizedBox(height: 10),
-                      Text(_authError!, style: const TextStyle(color: kRed, fontSize: 12, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text(_authError!, style: const TextStyle(color: kRed, fontSize: 11.5, fontWeight: FontWeight.bold)),
                     ],
 
                     const SizedBox(height: 14),
-                    ElevatedButton(
-                      onPressed: _authBusy ? null : _submitAuthForm,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kGold,
-                        foregroundColor: kInk,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    SizedBox(
+                      height: 44,
+                      child: ElevatedButton(
+                        onPressed: _authBusy ? null : _submitAuthForm,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kGold,
+                          foregroundColor: kInk,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: _authBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
+                              )
+                            : Text(
+                                _isSignUp ? 'Créer mon compte & Recevoir le code' : 'Se connecter',
+                                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5),
+                              ),
                       ),
-                      child: _authBusy
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
-                            )
-                          : Text(
-                              _isSignUp ? 'Créer mon compte & Recevoir le code' : 'Se connecter',
-                              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
-                            ),
                     ),
 
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
-                        Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
+                        Expanded(child: Divider(color: Colors.white.withOpacity(0.14))),
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 10),
-                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 10.5)),
+                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 10)),
                         ),
-                        Expanded(child: Divider(color: Colors.white.withOpacity(0.15))),
+                        Expanded(child: Divider(color: Colors.white.withOpacity(0.14))),
                       ],
                     ),
                     const SizedBox(height: 12),
 
-                    // Bouton officiel "Continuer avec Apple"
-                    ElevatedButton.icon(
-                      onPressed: _submitAppleLogin,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                      icon: const Icon(Icons.apple_rounded, size: 20, color: Colors.black),
-                      label: const Text(
-                        'Continuer avec Apple',
-                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.black),
+                    SizedBox(
+                      height: 44,
+                      child: ElevatedButton.icon(
+                        onPressed: _submitAppleLogin,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: const Icon(Icons.apple_rounded, size: 20, color: Colors.black),
+                        label: const Text(
+                          'Continuer avec Apple',
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.black),
+                        ),
                       ),
                     ),
 
-                    const SizedBox(height: 10),
-                    // Bouton "Continuer sans créer de compte" (Mode Invité)
+                    const SizedBox(height: 8),
                     TextButton.icon(
                       onPressed: _continueAsGuest,
-                      icon: const Icon(Icons.explore_outlined, size: 16, color: Colors.white70),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                      ),
+                      icon: const Icon(Icons.explore_outlined, size: 15, color: Colors.white70),
                       label: const Text(
                         'Continuer sans créer de compte (Mode Invité)',
                         style: TextStyle(
                           color: Colors.white70,
-                          fontSize: 12,
+                          fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                           decoration: TextDecoration.underline,
                         ),
@@ -997,70 +1023,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Sélecteur des 16 indicatifs téléphoniques d'Afrique de l'Ouest
-  void _showDialCountryPicker() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF101432),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: kGold.withOpacity(0.45)),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.public_rounded, color: kGold, size: 20),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Indicatif Pays (Afrique de l’Ouest)',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
-              ),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 340,
-          height: 380,
-          child: ListView.separated(
-            itemCount: kWestAfricaDialCodes.length,
-            separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.08)),
-            itemBuilder: (context, i) {
-              final item = kWestAfricaDialCodes[i];
-              final sel = item.code == _dialCountry.code;
-              return ListTile(
-                dense: true,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: sel ? kGold.withOpacity(0.18) : null,
-                leading: Text(item.flag, style: const TextStyle(fontSize: 22)),
-                title: Text(
-                  item.name,
-                  style: TextStyle(
-                    color: sel ? kGold : Colors.white,
-                    fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
-                    fontSize: 13.5,
-                  ),
-                ),
-                trailing: Text(
-                  item.dial,
-                  style: TextStyle(
-                    color: sel ? kGold : kCyan,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 13.5,
-                  ),
-                ),
-                onTap: () {
-                  setState(() => _dialCountry = item);
-                  Navigator.pop(ctx);
-                },
-              );
-            },
           ),
         ),
       ),
@@ -1077,7 +1039,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           constraints: const BoxConstraints(maxWidth: 420),
           child: Column(
             children: [
-              // Notification mobile simulée en haut de l'écran avec le code reçu
               if (_otpPreviewCode != null && _otpPreviewCode!.isNotEmpty)
                 InkWell(
                   borderRadius: BorderRadius.circular(16),
@@ -1105,7 +1066,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Votre code de validation est : $_otpPreviewCode (Appuyez pour remplir)',
+                                'Code de validation : $_otpPreviewCode (Appuyez pour remplir)',
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12.5),
                               ),
                             ],
@@ -1176,12 +1137,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
+                      height: 46,
                       child: ElevatedButton.icon(
                         onPressed: _authBusy ? null : _verifyOtpCode,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: kGold,
                           foregroundColor: kInk,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         ),
                         icon: const Icon(Icons.check_circle_rounded, size: 18),
@@ -1220,11 +1181,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // ═══════════════════════════ ÉCRAN 3 : AUTORISATION DE LOCALISATION GPS ═══════════════════════════
   Widget _buildLocationPermissionScreen({required bool inPhone}) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 36),
-      child: Center(
+    return Center(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.symmetric(horizontal: inPhone ? 20 : 28, vertical: 24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+          constraints: const BoxConstraints(maxWidth: 400),
           child: Glass(
             accent: kCyan,
             padding: const EdgeInsets.all(24),
@@ -1232,37 +1193,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 78,
-                  height: 78,
+                  width: 74,
+                  height: 74,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: kCyan.withOpacity(0.14),
                     border: Border.all(color: kCyan.withOpacity(0.6), width: 1.8),
                     boxShadow: [BoxShadow(color: kCyan.withOpacity(0.25), blurRadius: 24)],
                   ),
-                  child: const Icon(Icons.my_location_rounded, color: kCyan, size: 38),
+                  child: const Icon(Icons.my_location_rounded, color: kCyan, size: 36),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 const Text(
                   'Autoriser votre localisation',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900),
+                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 const Text(
-                  'WeerWi a besoin de votre position GPS pour configurer automatiquement l’observatoire lunaire sur votre ville et afficher uniquement les régions de votre pays.',
+                  'WeerWi utilise votre position GPS pour configurer automatiquement l’observatoire lunaire sur votre localité et afficher uniquement les régions de votre pays.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 13.5, height: 1.5),
+                  style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
+                  height: 46,
                   child: ElevatedButton.icon(
                     onPressed: _gpsLoading ? null : _authorizeAndDetectGps,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: kGold,
                       foregroundColor: kInk,
-                      padding: const EdgeInsets.symmetric(vertical: 15),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     icon: _gpsLoading
@@ -1271,17 +1232,446 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
                           )
-                        : const Icon(Icons.location_on_rounded),
+                        : const Icon(Icons.location_on_rounded, size: 19),
                     label: Text(
                       _gpsLoading ? 'Détection GPS en cours…' : 'Autoriser la localisation GPS',
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14.5),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
                     ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => setState(() => _stage = _AppStage.login),
+                  child: const Text(
+                    '← Retour à l’écran de connexion',
+                    style: TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  // ═══════════════════════════ MODALES INTÉGRÉES DANS L'ÉCRAN DU TÉLÉPHONE ═══════════════════════════
+  Widget _buildInScreenModalOverlay() {
+    Widget content;
+    switch (_modal) {
+      case _PhoneModal.dialPicker:
+        content = _buildDialPickerModalCard();
+        break;
+      case _PhoneModal.profile:
+        content = _buildProfileModalCard();
+        break;
+      case _PhoneModal.bulletin:
+        content = _buildBulletinModalCard();
+        break;
+      case _PhoneModal.guestRestriction:
+        content = _buildGuestRestrictionModalCard();
+        break;
+      case _PhoneModal.none:
+        return const SizedBox.shrink();
+    }
+
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: () => setState(() => _modal = _PhoneModal.none),
+        child: Container(
+          color: Colors.black.withOpacity(0.72),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          alignment: Alignment.center,
+          child: GestureDetector(
+            onTap: () {}, // Empêche la fermeture au clic sur la carte
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 380),
+              child: content,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDialPickerModalCard() {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 540),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101432),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kGold.withOpacity(0.5), width: 1.4),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.6), blurRadius: 24)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.public_rounded, color: kGold, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Indicatif Pays (Afrique de l’Ouest)',
+                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _modal = _PhoneModal.none),
+                icon: const Icon(Icons.cancel_rounded, color: Colors.white70, size: 20),
+              ),
+            ],
+          ),
+          const Divider(height: 12, color: Colors.white12),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: kWestAfricaDialCodes.length,
+              separatorBuilder: (_, __) => Divider(height: 1, color: Colors.white.withOpacity(0.06)),
+              itemBuilder: (context, i) {
+                final item = kWestAfricaDialCodes[i];
+                final sel = item.code == _dialCountry.code;
+                return InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () {
+                    setState(() {
+                      _dialCountry = item;
+                      _modal = _PhoneModal.none;
+                    });
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: sel ? kGold.withOpacity(0.18) : Colors.transparent,
+                    ),
+                    child: Row(
+                      children: [
+                        Text(item.flag, style: const TextStyle(fontSize: 20)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            item.name,
+                            style: TextStyle(
+                              color: sel ? kGold : Colors.white,
+                              fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
+                              fontSize: 13.5,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          item.dial,
+                          style: TextStyle(
+                            color: sel ? kGold : kCyan,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileModalCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101432),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kGold.withOpacity(0.5), width: 1.4),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            children: [
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: const LinearGradient(colors: [Color(0xFF252D63), Color(0xFF121636)]),
+                  border: Border.all(color: kGold, width: 1.8),
+                ),
+                child: const Icon(Icons.person_rounded, color: kGold, size: 32),
+              ),
+              Positioned(
+                right: 2,
+                bottom: 2,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: kGreen,
+                    border: Border.all(color: const Color(0xFF101432), width: 2.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            _userFullName ?? 'Compte connecté',
+            style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _maskedIdentity(_authIdentity),
+            style: const TextStyle(color: Colors.white60, fontSize: 12.5),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white12),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.my_location_rounded, color: kCyan, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Zone GPS : ${_city.flag} ${_city.name} (${_city.country})',
+                    style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => setState(() => _modal = _PhoneModal.none),
+                  child: const Text('Fermer', style: TextStyle(color: Colors.white70)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kRed.withOpacity(0.2),
+                    foregroundColor: kRed,
+                    side: BorderSide(color: kRed.withOpacity(0.6)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    try {
+                      FirebaseAuth.instance.signOut();
+                    } catch (_) {}
+                    setState(() {
+                      _modal = _PhoneModal.none;
+                      _authIdentity = null;
+                      _userFullName = null;
+                      _isGuest = false;
+                      _stage = _AppStage.login;
+                    });
+                  },
+                  icon: const Icon(Icons.logout_rounded, size: 15),
+                  label: const Text('Déconnexion', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGuestRestrictionModalCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101432),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kGold.withOpacity(0.5), width: 1.4),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: kGold.withOpacity(0.14),
+              border: Border.all(color: kGold),
+            ),
+            child: const Icon(Icons.lock_person_rounded, color: kGold, size: 28),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Réservé aux membres inscrits',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'En mode Invité, vous avez accès librement à l’observatoire du soir, à la boussole, au calendrier et aux régions de votre pays.\n\n'
+            'L’export du Bulletin Scientifique Officiel PDF certifié nécessite la création gratuite d’un compte WeerWi.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.45),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => setState(() => _modal = _PhoneModal.none),
+                  child: const Text('Plus tard', style: TextStyle(color: Colors.white60)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kGold,
+                    foregroundColor: kInk,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _modal = _PhoneModal.none;
+                      _isSignUp = true;
+                      _stage = _AppStage.login;
+                    });
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_rounded, size: 15),
+                  label: const Text('Créer un compte', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBulletinModalCard() {
+    final d = _eveningData;
+    final r = _regionsData;
+    final sen = (r?['sentinel'] as Map<String, dynamic>?) ?? {};
+    final url = Api.bulletinUrl(_city, _date, _regionHijriMonth);
+
+    final reportText = '''
+🌙 BULLETIN ASTRONOMIQUE OFFICIEL WEERWI
+📍 Localité : ${_city.flag} ${_city.name} (${_city.country})
+📅 Soirée : ${d?['date_label'] ?? frDate(_date, weekday: true)}
+🔭 Verdict : ${d?['badge_text'] ?? '—'}
+
+🌅 Coucher Soleil : ${d?['sunset'] ?? '—'} | 🌙 Coucher Lune : ${d?['moonset'] ?? '—'} (Lag : ${d?['lag_minutes'] ?? '—'} min)
+🧭 Visée : Azimut ${d?['moon_azimuth_deg'] ?? '—'}° (${d?['cardinal_direction'] ?? 'O'}) • Hauteur ${d?['altitude_deg'] ?? '—'}°
+🌓 Phase : ${d?['phase'] ?? '—'} (${d?['illumination'] ?? '—'}%) • Âge : ${d?['age_hours'] ?? '—'} h
+🌪️ Atmosphère : ${d?['turbulence_level'] ?? '—'}
+
+🏆 Point Sentinelle (${_city.country}) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
+📌 Synthèse : ${d?['observation_tip'] ?? ''}
+🕌 Contexte : ${d?['ramadan_status'] ?? ''}
+(Source : WeerWi • Éphémérides NASA JPL DE421 • Critères de Yallop & Odeh)''';
+
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 560),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101432),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: kGold.withOpacity(0.5), width: 1.4),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.picture_as_pdf_rounded, color: kGold, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Bulletin Scientifique Officiel',
+                  style: TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                onPressed: () => setState(() => _modal = _PhoneModal.none),
+                icon: const Icon(Icons.cancel_rounded, color: Colors.white70, size: 20),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Flexible(
+            child: SingleChildScrollView(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.35),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.white12),
+                ),
+                child: SelectableText(
+                  reportText,
+                  style: const TextStyle(color: Colors.white, fontSize: 11.5, height: 1.45),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kCyan,
+                    foregroundColor: kInk,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: url));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Lien du Bulletin PDF copié !')),
+                    );
+                  },
+                  icon: const Icon(Icons.link_rounded, size: 15),
+                  label: const Text('Lien PDF', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kGold,
+                    foregroundColor: kInk,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: reportText));
+                    setState(() => _modal = _PhoneModal.none);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('📋 Bulletin copié pour WhatsApp !')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 15),
+                  label: const Text('Copier texte', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1323,7 +1713,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// Barre de navigation mobile en bas : l'onglet 4 s'appelle toujours simplement "Régions"
   Widget _buildAndroidBottomNav() {
     final items = [
       (0, Icons.nightlight_round, 'Ce soir'),
@@ -1345,7 +1734,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               final sel = _tab == item.$1;
               return Expanded(
                 child: InkWell(
-                  onTap: () => setState(() => _tab = item.$1),
+                  onTap: () => _switchTab(item.$1),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -1386,7 +1775,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildAppScrollContent({required bool inPhone}) {
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(inPhone ? 14 : 18, 10, inPhone ? 14 : 18, inPhone ? 28 : 210),
+      controller: _mainScrollCtrl,
+      padding: EdgeInsets.fromLTRB(inPhone ? 14 : 18, 10, inPhone ? 14 : 18, inPhone ? 44 : 210),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 960),
@@ -1407,7 +1797,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               if (_tab == 1) _buildCalendarTab(),
               if (_tab == 2) _buildHilalTab(),
               if (_tab == 3) _buildRegionsTab(),
-              const SizedBox(height: 28),
+              const SizedBox(height: 24),
               _buildFooter(),
             ],
           ),
@@ -1449,7 +1839,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ),
         if (_isGuest)
-          // En mode Invité (sans compte), bouton discret invitant à se connecter
           InkWell(
             borderRadius: BorderRadius.circular(20),
             onTap: () => setState(() => _stage = _AppStage.login),
@@ -1474,10 +1863,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
           )
         else
-          // Compte connecté : avatar circulaire moderne avec pastille verte (sans exposer l'e-mail ni le numéro)
           InkWell(
             customBorder: const CircleBorder(),
-            onTap: _showProfileMenu,
+            onTap: () => setState(() => _modal = _PhoneModal.profile),
             child: Tooltip(
               message: 'Mon profil',
               child: SizedBox(
@@ -1538,156 +1926,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return 'Compte vérifié';
   }
 
-  void _showProfileMenu() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF101432),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: kGold.withOpacity(0.45)),
-        ),
-        contentPadding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Stack(
-              children: [
-                Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(colors: [Color(0xFF252D63), Color(0xFF121636)]),
-                    border: Border.all(color: kGold, width: 1.8),
-                  ),
-                  child: const Icon(Icons.person_rounded, color: kGold, size: 34),
-                ),
-                Positioned(
-                  right: 2,
-                  bottom: 2,
-                  child: Container(
-                    width: 15,
-                    height: 15,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: kGreen,
-                      border: Border.all(color: const Color(0xFF101432), width: 2.5),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _userFullName ?? 'Compte connecté',
-              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _maskedIdentity(_authIdentity),
-              style: const TextStyle(color: Colors.white60, fontSize: 12.5),
-            ),
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+  Widget _buildLocationAndToolsBar() {
+    return Row(
+      children: [
+        Expanded(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: _gpsLoading ? null : _authorizeAndDetectGps,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: Colors.white12),
+                color: kCyan.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: kCyan.withOpacity(0.55)),
               ),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.my_location_rounded, color: kCyan, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
+                  if (_gpsLoading)
+                    const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kCyan))
+                  else
+                    const Icon(Icons.my_location_rounded, size: 13, color: kCyan),
+                  const SizedBox(width: 6),
+                  Flexible(
                     child: Text(
-                      'Zone GPS : ${_city.flag} ${_city.name} (${_city.country})',
-                      style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+                      'GPS : ${_city.name} (${_city.country})',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: kCyan, fontSize: 11, fontWeight: FontWeight.w800),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Fermer', style: TextStyle(color: Colors.white70)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kRed.withOpacity(0.2),
-                      foregroundColor: kRed,
-                      side: BorderSide(color: kRed.withOpacity(0.6)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    onPressed: () {
-                      try {
-                        FirebaseAuth.instance.signOut();
-                      } catch (_) {}
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _authIdentity = null;
-                        _userFullName = null;
-                        _isGuest = false;
-                        _stage = _AppStage.login;
-                      });
-                    },
-                    icon: const Icon(Icons.logout_rounded, size: 16),
-                    label: const Text('Déconnexion', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLocationAndToolsBar() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: _gpsLoading ? null : _authorizeAndDetectGps,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-            decoration: BoxDecoration(
-              color: kCyan.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kCyan.withOpacity(0.55)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_gpsLoading)
-                  const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kCyan))
-                else
-                  const Icon(Icons.my_location_rounded, size: 13, color: kCyan),
-                const SizedBox(width: 6),
-                Text(
-                  'GPS : ${_city.name} (${_city.country})',
-                  style: const TextStyle(color: kCyan, fontSize: 11, fontWeight: FontWeight.w800),
-                ),
-              ],
-            ),
           ),
         ),
+        const SizedBox(width: 8),
         InkWell(
           borderRadius: BorderRadius.circular(20),
-          onTap: _isGuest ? _showGuestRestrictionDialog : _showBulletinDialog,
+          onTap: () => setState(() => _modal = _isGuest ? _PhoneModal.guestRestriction : _PhoneModal.bulletin),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: kViolet.withOpacity(0.15),
               borderRadius: BorderRadius.circular(20),
@@ -1710,55 +1988,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _showGuestRestrictionDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF101432),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: kGold.withOpacity(0.45)),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.lock_person_rounded, color: kGold),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Fonctionnalité réservée aux membres',
-                style: TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w900),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'En mode Invité, vous avez accès librement à l’observatoire du soir, à la boussole, au calendrier et aux régions de votre pays.\n\n'
-          'La génération du Bulletin Scientifique Officiel PDF certifié et la sauvegarde de votre profil nécessitent un compte WeerWi.',
-          style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Plus tard', style: TextStyle(color: Colors.white60)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: kGold, foregroundColor: kInk),
-            onPressed: () {
-              Navigator.pop(ctx);
-              setState(() {
-                _isSignUp = true;
-                _stage = _AppStage.login;
-              });
-            },
-            icon: const Icon(Icons.person_add_alt_1_rounded, size: 16),
-            label: const Text('Créer un compte', style: TextStyle(fontWeight: FontWeight.w900)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Barre horizontale affichant UNIQUEMENT les localités du pays de l'utilisateur
   Widget _buildLocalCountryCitiesBar() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1769,7 +1998,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: 38,
+          height: 36,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _countryCities.length,
@@ -1782,7 +2011,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 onTap: () => _selectCity(c),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 13),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(30),
@@ -1798,7 +2027,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     c.name,
                     style: TextStyle(
                       color: sel ? kInk : Colors.white,
-                      fontWeight: sel ? FontWeight.w800 : FontWeight.w500,
+                      fontWeight: sel ? FontWeight.w900 : FontWeight.w500,
                       fontSize: 12,
                     ),
                   ),
@@ -1811,7 +2040,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  /// Barre de navigation grand écran : l'onglet 4 s'appelle toujours simplement "Régions"
   Widget _buildNavigationTabs() {
     final items = [
       (0, Icons.nightlight_round, 'Ce soir • Observatoire'),
@@ -1832,7 +2060,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           return Expanded(
             child: InkWell(
               borderRadius: BorderRadius.circular(16),
-              onTap: () => setState(() => _tab = item.$1),
+              onTap: () => _switchTab(item.$1),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 220),
                 padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 6),
@@ -1885,19 +2113,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Column(
           children: [
             SizedBox(
-              height: 250,
+              height: 236,
               child: AnimatedBuilder(
                 animation: Listenable.merge([_float, _orbit, _pulse]),
                 builder: (context, _) {
-                  final dy = math.sin(_float.value * 2 * math.pi) * 7;
+                  final dy = math.sin(_float.value * 2 * math.pi) * 6;
                   return Stack(
                     alignment: Alignment.center,
                     children: [
-                      CustomPaint(size: const Size(330, 250), painter: OrbitPainter(_orbit.value)),
+                      CustomPaint(size: const Size(320, 236), painter: OrbitPainter(_orbit.value)),
                       Transform.translate(
                         offset: Offset(0, dy),
                         child: CustomPaint(
-                          size: const Size(185, 185),
+                          size: const Size(176, 176),
                           painter: MoonPainter(
                             illumination: illum,
                             waxing: waxing,
@@ -1914,7 +2142,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               phase,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 23,
+                fontSize: 22,
                 fontWeight: FontWeight.w800,
                 color: Colors.white,
                 shadows: [Shadow(color: kGold, blurRadius: 18)],
@@ -1924,7 +2152,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Text(
               '${_city.flag}  ${_city.name}, ${_city.country}  •  ${frDate(_date, weekday: true)}',
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
             const SizedBox(height: 3),
             Text('📡 $coords', style: TextStyle(color: kCyan.withOpacity(0.75), fontSize: 11, letterSpacing: 1.2)),
@@ -1956,7 +2184,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       child: Text(
                         badgeText,
                         textAlign: TextAlign.center,
-                        style: TextStyle(color: badgeCol, fontWeight: FontWeight.w800, fontSize: 11.5, letterSpacing: 1.1),
+                        style: TextStyle(color: badgeCol, fontWeight: FontWeight.w800, fontSize: 11.5, letterSpacing: 1.0),
                       ),
                     ),
                   ],
@@ -2013,7 +2241,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(
             children: [
               CustomPaint(
-                size: const Size(112, 112),
+                size: const Size(110, 110),
                 painter: CompassPainter(moonAz: moonAz, sunAz: sunAz, moonAlt: moonAlt),
               ),
               const SizedBox(width: 14),
@@ -2062,96 +2290,111 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildDateControlBar() {
     return Glass(
       accent: kGold,
-      padding: const EdgeInsets.all(12),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        spacing: 8,
-        runSpacing: 8,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  setState(() => _date = _date.subtract(const Duration(days: 1)));
-                  _loadEvening();
-                },
-                icon: const Icon(Icons.chevron_left_rounded, color: kGold),
-              ),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: _pickEveningDate,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: Colors.white.withOpacity(0.05),
-                    border: Border.all(color: Colors.white.withOpacity(0.14)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.event_rounded, color: kGold, size: 16),
-                      const SizedBox(width: 8),
-                      Text(
-                        frDate(_date),
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                onPressed: () {
-                  setState(() => _date = _date.add(const Duration(days: 1)));
-                  _loadEvening();
-                },
-                icon: const Icon(Icons.chevron_right_rounded, color: kGold),
-              ),
-            ],
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 32),
+            onPressed: () {
+              setState(() => _date = _date.subtract(const Duration(days: 1)));
+              _loadEvening();
+            },
+            icon: const Icon(Icons.chevron_left_rounded, color: kGold),
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextButton(
-                onPressed: () {
-                  setState(() => _date = DateTime.now());
-                  _loadEvening();
-                },
-                child: const Text("Aujourd'hui", style: TextStyle(color: kCyan, fontSize: 12)),
-              ),
-              ElevatedButton(
-                onPressed: _loadingEvening ? null : _loadEvening,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kGold,
-                  foregroundColor: kInk,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: _pickEveningDate,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white.withOpacity(0.05),
+                  border: Border.all(color: Colors.white.withOpacity(0.14)),
                 ),
-                child: const Text('Analyser', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.event_rounded, color: kGold, size: 15),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        frDate(_date),
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12.5),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ],
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 32),
+            onPressed: () {
+              setState(() => _date = _date.add(const Duration(days: 1)));
+              _loadEvening();
+            },
+            icon: const Icon(Icons.chevron_right_rounded, color: kGold),
+          ),
+          const SizedBox(width: 4),
+          InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () {
+              setState(() => _date = DateTime.now());
+              _loadEvening();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                color: kCyan.withOpacity(0.14),
+                border: Border.all(color: kCyan.withOpacity(0.45)),
+              ),
+              child: const Text(
+                "Aujourd'hui",
+                style: TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.w800),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
+  /// Grille 2×2 parfaitement symétrique pour les 4 éphémérides du soir
   Widget _buildSunMoonTimesBar(Map<String, dynamic> d) {
     final sunset = (d['sunset'] as String?) ?? '—';
     final moonset = (d['moonset'] as String?) ?? '—';
-    final lag = d['lag_minutes'];
+    final moonriseTonight = d['moonrise_tonight'] as String?;
+    final lag = d['lag_minutes'] as num?;
     final presence = (d['moon_presence'] as String?) ?? '';
     final presentTonight = (d['present_tonight'] as bool?) ?? false;
 
-    final lagStr = lag == null
-        ? '—'
-        : (lag as num) >= 0
-            ? '+$lag min'
-            : '$lag min';
+    String thirdLabel;
+    String thirdValue;
+    Color thirdColor;
+    IconData thirdIcon;
+    if (lag != null && lag > 0) {
+      thirdLabel = 'Décalage (Lag)';
+      thirdValue = '+$lag min';
+      thirdColor = kGreen;
+      thirdIcon = Icons.timelapse_rounded;
+    } else if (moonriseTonight != null) {
+      thirdLabel = 'Lever Lune (Nuit)';
+      thirdValue = moonriseTonight;
+      thirdColor = kGold;
+      thirdIcon = Icons.light_mode_rounded;
+    } else {
+      thirdLabel = 'Au coucher Soleil';
+      thirdValue = 'Sous l’horizon';
+      thirdColor = kOrange;
+      thirdIcon = Icons.timelapse_rounded;
+    }
 
     return Glass(
       accent: kCyan,
@@ -2161,18 +2404,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           const SectionTitle('ÉPHÉMÉRIDES DU CRÉPUSCULE & DE LA NUIT', icon: Icons.schedule_rounded, color: kCyan),
           const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+          Row(
             children: [
-              _timeStat(Icons.wb_twilight_rounded, 'Coucher Soleil', sunset, kGold),
-              _timeStat(Icons.nights_stay_rounded, 'Coucher Lune', moonset, kCyan),
-              _timeStat(Icons.timelapse_rounded, 'Décalage', lagStr, (lag is num && lag > 0) ? kGreen : kOrange),
-              _timeStat(
-                presentTonight ? Icons.check_circle_outline_rounded : Icons.highlight_off_rounded,
-                'Cette nuit',
-                presentTonight ? 'Présente' : 'Absente',
-                presentTonight ? kGreen : kRed,
+              Expanded(child: _timeStat(Icons.wb_twilight_rounded, 'Coucher Soleil', sunset, kGold)),
+              const SizedBox(width: 10),
+              Expanded(child: _timeStat(Icons.nights_stay_rounded, 'Coucher Lune', moonset, kCyan)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _timeStat(thirdIcon, thirdLabel, thirdValue, thirdColor)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _timeStat(
+                  presentTonight ? Icons.check_circle_outline_rounded : Icons.highlight_off_rounded,
+                  'Présence Nuit',
+                  presentTonight ? 'Présente' : 'Absente',
+                  presentTonight ? kGreen : kRed,
+                ),
               ),
             ],
           ),
@@ -2187,23 +2437,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _timeStat(IconData icon, String label, String value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.04),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.25)),
+        border: Border.all(color: color.withOpacity(0.28)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: color, size: 17),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9.5)),
-              Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
-            ],
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  value,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -2221,9 +2481,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('RAPPORT SCIENTIFIQUE DE VOTRE ASTRONAUTE', icon: Icons.person_pin_circle_rounded, color: col),
+          SectionTitle('DIAGNOSTIC SCIENTIFIQUE DE L’OBSERVATOIRE', icon: Icons.auto_awesome_rounded, color: col),
           const SizedBox(height: 8),
-          Text(tip, style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.45)),
+          Text(tip, style: const TextStyle(color: Colors.white, fontSize: 13.5, height: 1.45)),
           if (weatherNote.isNotEmpty) ...[
             const SizedBox(height: 10),
             Container(
@@ -2370,14 +2630,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final age = toD(d['age_days']) ?? 0;
     final cloud = toD(d['cloud_cover']);
 
+    // Si la hauteur est négative (sous l'horizon), jauge orange/rouge avec faible arc
+    final altFraction = alt > 0 ? (alt / 90.0).clamp(0.05, 1.0) : 0.06;
+    final altColor = alt > 0 ? kGreen : kOrange;
+    final altUnit = alt > 0 ? 'degrés' : 'sous horizon';
+
     return Wrap(
       alignment: WrapAlignment.center,
-      spacing: 10,
-      runSpacing: 10,
+      spacing: 12,
+      runSpacing: 12,
       children: [
         Gauge('ILLUMINATION', illum.toStringAsFixed(1), '%', illum / 100, kGold, Icons.light_mode_rounded),
         Gauge('ÉLONGATION', elong.toStringAsFixed(1), 'degrés', elong / 180, kCyan, Icons.architecture_rounded),
-        Gauge('HAUTEUR', alt.toStringAsFixed(1), 'degrés', (alt + 90) / 180, kGreen, Icons.height_rounded),
+        Gauge('HAUTEUR', '${alt.toStringAsFixed(1)}°', altUnit, altFraction, altColor, Icons.height_rounded),
         Gauge('ÂGE EXACT', age.toStringAsFixed(1), 'jours', age / 29.53, kViolet, Icons.hourglass_bottom_rounded),
         Gauge('NUAGES', cloud == null ? '—' : cloud.toStringAsFixed(0), '%', (cloud ?? 0) / 100,
             const Color(0xFF8EC5FF), Icons.cloud_rounded),
@@ -2620,6 +2885,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
+  /// Carte de détail du jour sélectionné (sans aucun débordement horizontal)
   Widget _buildSelectedDayDetail(Map<String, dynamic> d) {
     final dateIso = (d['date'] as String?) ?? '';
     final dtParsed = DateTime.tryParse(dateIso);
@@ -2632,57 +2898,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 10,
-            runSpacing: 10,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CustomPaint(
-                    size: const Size(40, 40),
-                    painter: MoonPainter(
-                      illumination: toD(d['illumination']) ?? 0,
-                      waxing: (d['waxing'] as bool?) ?? true,
-                      mini: true,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        dtParsed != null ? frDate(dtParsed, weekday: true) : dateIso,
-                        style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
-                      ),
-                      Text(
-                        '${d['phase']} • ${d['illumination']}% • ${d['hijri_estimate']}',
-                        style: const TextStyle(color: Colors.white70, fontSize: 11.5),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              ElevatedButton.icon(
-                onPressed: dtParsed == null
-                    ? null
-                    : () {
-                        setState(() {
-                          _date = dtParsed;
-                          _tab = 0;
-                        });
-                        _loadEvening();
-                      },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kGold,
-                  foregroundColor: kInk,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              CustomPaint(
+                size: const Size(42, 42),
+                painter: MoonPainter(
+                  illumination: toD(d['illumination']) ?? 0,
+                  waxing: (d['waxing'] as bool?) ?? true,
+                  mini: true,
                 ),
-                icon: const Icon(Icons.visibility_rounded, size: 15),
-                label: const Text('Observer ce soir', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11.5)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      dtParsed != null ? frDate(dtParsed, weekday: true) : dateIso,
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${d['phase']} (${d['illumination']}%) • ${d['hijri_estimate']}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11.5, height: 1.35),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -2700,50 +2942,102 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 Pill('Hilal : ${crescent['verdict_text']}', verdictColor(crescent['verdict_code'] as String?)),
             ],
           ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 38,
+            child: ElevatedButton.icon(
+              onPressed: dtParsed == null
+                  ? null
+                  : () {
+                      setState(() => _date = dtParsed);
+                      _switchTab(0);
+                      _loadEvening();
+                    },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kGold,
+                foregroundColor: kInk,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.visibility_rounded, size: 16),
+              label: const Text('Observer cette soirée dans l’Observatoire',
+                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  // ═══════════════════════════ ONGLET 2 : HILAL & RAMADAN (PAYS DE L'UTILISATEUR UNIQUEMENT) ═══════════════════════════
-  Widget _buildHilalTab() {
-    final selectors = [
-      (9, '🕌 Ramadan'),
-      (10, '🌙 Chawwal (Korité)'),
-      (12, '🕋 Tabaski'),
-      (0, '🔭 Prochain mois'),
+  // ─────────────────────────── Grille 2×2 symétrique pour le choix du mois sacré ───────────────────────────
+  Widget _buildSacredMonthGrid({required int selectedMonth, required ValueChanged<int> onSelect}) {
+    const items = [
+      (9, Icons.mosque_rounded, 'Ramadan'),
+      (10, Icons.nightlight_round, 'Chawwal (Korité)'),
+      (12, Icons.star_rounded, 'Dhou al-Hijja (Tabaski)'),
+      (0, Icons.travel_explore_rounded, 'Prochain Hilal'),
     ];
+    Widget pill((int, IconData, String) s) {
+      final sel = selectedMonth == s.$1;
+      return Expanded(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => onSelect(s.$1),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: sel ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+              color: sel ? null : const Color(0xFF14183A).withOpacity(0.85),
+              border: Border.all(color: sel ? kGold : Colors.white24),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(s.$2, size: 14, color: sel ? kInk : kGold),
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    s.$3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: sel ? kInk : Colors.white,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Row(children: [pill(items[0]), const SizedBox(width: 8), pill(items[1])]),
+        const SizedBox(height: 8),
+        Row(children: [pill(items[2]), const SizedBox(width: 8), pill(items[3])]),
+      ],
+    );
+  }
+
+  // ═══════════════════════════ ONGLET 2 : HILAL & RAMADAN ═══════════════════════════
+  Widget _buildHilalTab() {
     final h = _hilalData;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: selectors.map((s) {
-            final sel = _targetHijriMonth == s.$1;
-            return InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () {
-                setState(() => _targetHijriMonth = s.$1);
-                _loadHilal();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  gradient: sel ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
-                  color: sel ? null : const Color(0xFF14183A).withOpacity(0.8),
-                  border: Border.all(color: sel ? kGold : Colors.white24),
-                ),
-                child: Text(
-                  s.$2,
-                  style: TextStyle(color: sel ? kInk : Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
-                ),
-              ),
-            );
-          }).toList(),
+        _buildSacredMonthGrid(
+          selectedMonth: _targetHijriMonth,
+          onSelect: (m) {
+            setState(() => _targetHijriMonth = m);
+            _loadHilal();
+          },
         ),
         if (_errorHilal != null) ...[
           const SizedBox(height: 14),
@@ -2779,28 +3073,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 10),
           Text(
             'Conjonction exacte (Nouvelle Lune) : ${h['conjunction_label']}',
-            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+            style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 10,
-            children: [
-              _startCard(
-                '1er $hMonth (Visibilité à l’œil nu)',
-                (loc['start_naked_eye_label'] as String?) ?? '—',
-                'Critère scientifique à l’œil nu (Odeh Zone A)',
-                kGreen,
-                Icons.visibility_rounded,
-              ),
-              _startCard(
-                '1er $hMonth (Avec instruments)',
-                (loc['start_with_instruments_label'] as String?) ?? '—',
-                'Si l’observation optique est retenue',
-                kCyan,
-                Icons.biotech_rounded,
-              ),
-            ],
+          _startCard(
+            '1er $hMonth (Visibilité à l’œil nu)',
+            (loc['start_naked_eye_label'] as String?) ?? '—',
+            'Critère scientifique à l’œil nu (Odeh Zone A)',
+            kGreen,
+            Icons.visibility_rounded,
+          ),
+          const SizedBox(height: 10),
+          _startCard(
+            '1er $hMonth (Avec instruments optiques)',
+            (loc['start_with_instruments_label'] as String?) ?? '—',
+            'Si l’observation aux jumelles / télescope est retenue',
+            kCyan,
+            Icons.biotech_rounded,
           ),
         ],
       ),
@@ -2809,7 +3098,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _startCard(String title, String dateLabel, String subtitle, Color col, IconData icon) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 240, maxWidth: 420),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: col.withOpacity(0.1),
@@ -2825,9 +3113,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title, style: TextStyle(color: col, fontSize: 11, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(dateLabel,
-                    style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.w900)),
+                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900)),
                 Text(subtitle, style: const TextStyle(color: Colors.white60, fontSize: 10.5)),
               ],
             ),
@@ -2874,7 +3162,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     children: [
                       Text(
                         'Soir du ${e['date_label']}',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
                       ),
                       Pill((e['verdict_text'] as String?) ?? '', col),
                     ],
@@ -2920,7 +3208,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 10),
           ...cities.map((c) {
             final evs = ((c['evenings'] as List?) ?? []).cast<Map<String, dynamic>>();
-            final regLabel = (c['region'] as String?)?.isNotEmpty == true ? ' (Région de ${c['region']})' : '';
+            final regLabel = (c['region'] as String?)?.isNotEmpty == true ? ' (${c['region']})' : '';
             return Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(10),
@@ -2940,9 +3228,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     children: [
                       Text(
                         '${c['flag']}  ${c['name']}$regLabel',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13.5),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      Pill('1er jour (œil nu) : ${c['start_naked_eye_label']}', kGreen),
+                      Pill('1er jour : ${c['start_naked_eye_label']}', kGreen),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -2967,20 +3255,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // ═══════════════════════════ ONGLET 3 : RÉGIONS DU PAYS DE L'UTILISATEUR UNIQUEMENT ═══════════════════════════
   Widget _buildRegionsTab() {
-    final months = [
-      (9, '🕌 Ramadan'),
-      (10, '🌙 Korité / Chawwal'),
-      (12, '🕋 Tabaski'),
-      (0, '🔭 Prochain Hilal'),
-    ];
     final r = _regionsData;
+    final eveningsList = ((r?['evenings'] as List?) ?? []).cast<Map<String, dynamic>>();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Glass(
           accent: kCyan,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -2990,70 +3273,56 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 color: kCyan,
               ),
               const SizedBox(height: 10),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: months.map((m) {
-                  final sel = _regionHijriMonth == m.$1;
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () {
-                      setState(() => _regionHijriMonth = m.$1);
-                      _loadRegions();
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        color: sel ? kCyan.withOpacity(0.22) : Colors.white.withOpacity(0.05),
-                        border: Border.all(color: sel ? kCyan : Colors.white12),
-                      ),
-                      child: Text(
-                        m.$2,
-                        style: TextStyle(
-                          color: sel ? kCyan : Colors.white70,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 11.5,
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
+              _buildSacredMonthGrid(
+                selectedMonth: _regionHijriMonth,
+                onSelect: (m) {
+                  setState(() => _regionHijriMonth = m);
+                  _loadRegions();
+                },
               ),
-              if (r != null && r['evenings'] != null) ...[
-                const SizedBox(height: 10),
+              if (eveningsList.isNotEmpty) ...[
+                const SizedBox(height: 12),
                 const Text('Soirée après la conjonction :', style: TextStyle(color: Colors.white60, fontSize: 11)),
                 const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: ((r['evenings'] as List).cast<Map<String, dynamic>>()).map((ev) {
-                    final idx = (ev['index'] as int?) ?? 0;
+                Row(
+                  children: List.generate(eveningsList.length, (i) {
+                    final ev = eveningsList[i];
+                    final idx = (ev['index'] as int?) ?? i;
                     final sel = _regionDayOffset == idx;
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () {
-                        setState(() => _regionDayOffset = idx);
-                        _loadRegions();
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          color: sel ? kGold : Colors.white.withOpacity(0.05),
-                          border: Border.all(color: sel ? kGold : Colors.white24),
-                        ),
-                        child: Text(
-                          'Soir ${idx + 1} (${ev['date']})',
-                          style: TextStyle(
-                            color: sel ? kInk : Colors.white,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 11.5,
+                    final dateShort = ((ev['date'] as String?) ?? '').length >= 10
+                        ? (ev['date'] as String).substring(5)
+                        : (ev['date'] as String? ?? '');
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(left: i == 0 ? 0 : 6),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            setState(() => _regionDayOffset = idx);
+                            _loadRegions();
+                          },
+                          child: Container(
+                            height: 36,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              gradient: sel ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
+                              color: sel ? null : Colors.white.withOpacity(0.05),
+                              border: Border.all(color: sel ? kGold : Colors.white24),
+                            ),
+                            child: Text(
+                              'Soir ${idx + 1} ($dateShort)',
+                              style: TextStyle(
+                                color: sel ? kInk : Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     );
-                  }).toList(),
+                  }),
                 ),
               ],
             ],
@@ -3093,7 +3362,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 8),
           Text(
             (r['rule_title'] as String?) ?? '',
-            style: TextStyle(color: col, fontSize: 15.5, fontWeight: FontWeight.w900),
+            style: TextStyle(color: col, fontSize: 15, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 6),
           Text(
@@ -3118,7 +3387,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     Expanded(
                       child: Text(
                         'Point Sentinelle #1 (Lieu le plus favorable) : ${sen['name']} — Région de ${sen['region']}',
-                        style: const TextStyle(color: kGold, fontWeight: FontWeight.w900, fontSize: 13.5),
+                        style: const TextStyle(color: kGold, fontWeight: FontWeight.w900, fontSize: 13),
                       ),
                     ),
                   ],
@@ -3135,7 +3404,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 10),
           Text(
             (r['rule_text'] as String?) ?? '',
-            style: const TextStyle(color: Colors.white, fontSize: 13, height: 1.45),
+            style: const TextStyle(color: Colors.white, fontSize: 12.5, height: 1.45),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -3156,7 +3425,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildRegionsBreakdown(Map<String, dynamic> r) {
     final regs = ((r['regions'] as List?) ?? []).cast<Map<String, dynamic>>();
     final flag = (r['flag'] as String?) ?? _city.flag;
-    final cname = (r['country_name'] as String?) ?? _city.country;
+    final cname = ((r['country_name'] as String?) ?? _city.country).split(' (').first;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3183,7 +3452,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     children: [
                       Text(
                         '$flag  Région de ${reg['region']}',
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14.5),
                       ),
                       Pill((reg['verdict_text'] as String?) ?? '', col),
                     ],
@@ -3200,7 +3469,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         onTap: () {
                           final chosen = City(
                             (l['name'] as String?) ?? '',
-                            cname.split(' (').first,
+                            cname,
                             flag,
                             toD(l['lat']) ?? _city.lat,
                             toD(l['lon']) ?? _city.lon,
@@ -3212,8 +3481,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           setState(() {
                             _city = chosen;
                             if (parsedDate != null) _date = parsedDate;
-                            _tab = 0;
                           });
+                          _switchTab(0);
                           _loadEvening();
                         },
                         child: Container(
@@ -3266,124 +3535,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ═══════════════════════════ BULLETIN OFFICIEL PDF / WHATSAPP ═══════════════════════════
-  void _showBulletinDialog() {
-    final d = _eveningData;
-    final r = _regionsData;
-    final sen = (r?['sentinel'] as Map<String, dynamic>?) ?? {};
-    final url = Api.bulletinUrl(_city, _date, _regionHijriMonth);
-
-    final reportText = '''
-🌙 BULLETIN ASTRONOMIQUE OFFICIEL WEERWI
-📍 Localité : ${_city.flag} ${_city.name} (${_city.country})
-📅 Soirée : ${d?['date_label'] ?? frDate(_date, weekday: true)}
-🔭 Verdict : ${d?['badge_text'] ?? '—'}
-
-🌅 Coucher Soleil : ${d?['sunset'] ?? '—'} | 🌙 Coucher Lune : ${d?['moonset'] ?? '—'} (Lag : ${d?['lag_minutes'] ?? '—'} min)
-🧭 Visée : Azimut ${d?['moon_azimuth_deg'] ?? '—'}° (${d?['cardinal_direction'] ?? 'O'}) • Hauteur ${d?['altitude_deg'] ?? '—'}°
-🌓 Phase : ${d?['phase'] ?? '—'} (${d?['illumination'] ?? '—'}%) • Âge : ${d?['age_hours'] ?? '—'} h
-🌪️ Atmosphère : ${d?['turbulence_level'] ?? '—'}
-
-🏆 Point Sentinelle (${_city.country}) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
-📌 Synthèse : ${d?['observation_tip'] ?? ''}
-🕌 Contexte : ${d?['ramadan_status'] ?? ''}
-(Source : WeerWi • Éphémérides NASA JPL DE421 • Critères de Yallop & Odeh)''';
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF101432),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: kGold.withOpacity(0.45)),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.picture_as_pdf_rounded, color: kGold),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Bulletin Scientifique Officiel',
-                style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
-              ),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.35),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white12),
-                ),
-                child: SelectableText(
-                  reportText,
-                  style: const TextStyle(color: Colors.white, fontSize: 12, height: 1.45),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Lien du Bulletin PDF complet (Régions de ${_city.country}) :',
-                style: const TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              SelectableText(url, style: const TextStyle(color: Colors.white70, fontSize: 11)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fermer', style: TextStyle(color: Colors.white60)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: kCyan, foregroundColor: kInk),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: url));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Lien du Bulletin PDF copié !')),
-              );
-            },
-            icon: const Icon(Icons.link_rounded, size: 16),
-            label: const Text('Copier lien PDF', style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(backgroundColor: kGold, foregroundColor: kInk),
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: reportText));
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('📋 Bulletin copié dans le presse-papiers !')),
-              );
-            },
-            icon: const Icon(Icons.copy_rounded, size: 16),
-            label: const Text('Copier pour WhatsApp', style: TextStyle(fontWeight: FontWeight.w900)),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildFooter() {
     return Column(
       children: [
-        Text('✦  ✦  ✦', style: TextStyle(color: kGold.withOpacity(0.5), letterSpacing: 6)),
+        Text('✦  ✦  ✦', style: TextStyle(color: kGold.withOpacity(0.6), letterSpacing: 6)),
         const SizedBox(height: 6),
         Text(
           'WeerWi • Observatoire astronomique national (${_city.country})',
           textAlign: TextAlign.center,
-          style: const TextStyle(color: Colors.white38, fontSize: 10.5),
+          style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         const Text(
           'Éphémérides NASA JPL DE421 · Critères de Yallop (1997) & Odeh (2004) · Météo Open-Meteo',
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white24, fontSize: 9.5),
+          style: TextStyle(color: Colors.white38, fontSize: 10),
         ),
       ],
     );
