@@ -110,6 +110,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late final AnimationController _float;
   late final AnimationController _orbit;
   late final AnimationController _pulse;
+  late final AnimationController _marqueeCtrl;
+  final GlobalKey _tickerUnitKey = GlobalKey();
 
   @override
   void initState() {
@@ -118,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _orbit = AnimationController(vsync: this, duration: const Duration(seconds: 18))..repeat();
     _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800))
       ..repeat(reverse: true);
+    _marqueeCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 16))..repeat();
   }
 
   @override
@@ -132,6 +135,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _float.dispose();
     _orbit.dispose();
     _pulse.dispose();
+    _marqueeCtrl.dispose();
     super.dispose();
   }
 
@@ -1450,7 +1454,44 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kCyan,
+                    side: BorderSide(color: kCyan.withOpacity(0.5)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onPressed: _gpsLoading
+                      ? null
+                      : () {
+                          setState(() => _modal = _PhoneModal.none);
+                          _authorizeAndDetectGps();
+                        },
+                  icon: const Icon(Icons.my_location_rounded, size: 14),
+                  label: const Text('Actualiser GPS', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: kGold,
+                    side: BorderSide(color: kGold.withOpacity(0.5)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onPressed: () => setState(() => _modal = _PhoneModal.bulletin),
+                  icon: const Icon(Icons.picture_as_pdf_rounded, size: 14),
+                  label: const Text('Bulletin PDF', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
@@ -1785,7 +1826,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               _buildHeader(),
               const SizedBox(height: 10),
-              _buildLocationAndToolsBar(),
+              _buildHadithMarqueeBanner(),
               const SizedBox(height: 12),
               _buildLocalCountryCitiesBar(),
               if (!inPhone) ...[
@@ -1926,65 +1967,135 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return 'Compte vérifié';
   }
 
-  Widget _buildLocationAndToolsBar() {
+  bool _isEnglishSpeakingCountry(String countryCode) {
+    const anglophoneCodes = {'GM', 'GH', 'NG', 'SL', 'LR'};
+    return anglophoneCodes.contains(countryCode.toUpperCase());
+  }
+
+  Widget _buildHadithTickerUnit(String translation) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: _gpsLoading ? null : _authorizeAndDetectGps,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: BoxDecoration(
-                color: kCyan.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: kCyan.withOpacity(0.55)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_gpsLoading)
-                    const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kCyan))
-                  else
-                    const Icon(Icons.my_location_rounded, size: 13, color: kCyan),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      'GPS : ${_city.name} (${_city.country})',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: kCyan, fontSize: 11, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+        const Text(
+          'صُومُوا لِرُؤْيَتِهِ وَأَفْطِرُوا لِرُؤْيَتِهِ',
+          textDirection: TextDirection.rtl,
+          style: TextStyle(
+            color: kGold,
+            fontSize: 15.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
+            fontFamilyFallback: ['Amiri', 'Traditional Arabic', 'Scheherazade New', 'Geeza Pro', 'serif'],
+            shadows: [Shadow(color: kGold, blurRadius: 10)],
           ),
         ),
-        const SizedBox(width: 8),
-        InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => setState(() => _modal = _isGuest ? _PhoneModal.guestRestriction : _PhoneModal.bulletin),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: kViolet.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: kViolet.withOpacity(0.6)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(_isGuest ? Icons.lock_outline_rounded : Icons.picture_as_pdf_rounded, size: 13, color: kViolet),
-                const SizedBox(width: 5),
-                const Text(
-                  'Bulletin PDF',
-                  style: TextStyle(color: kViolet, fontSize: 11, fontWeight: FontWeight.w800),
-                ),
-              ],
-            ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12),
+          child: Icon(Icons.nightlight_round, size: 13, color: kCyan),
+        ),
+        Text(
+          translation,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.95),
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            fontStyle: FontStyle.italic,
+            letterSpacing: 0.2,
           ),
+        ),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Icon(Icons.nightlight_round, size: 13, color: kGold),
         ),
       ],
+    );
+  }
+
+  Widget _buildHadithMarqueeBanner() {
+    final isEn = _isEnglishSpeakingCountry(_city.countryCode);
+    final translation = isEn
+        ? '“Fast when you see it, and break your fast when you see it.” — Hadith'
+        : '« Jeûnez à sa vue et rompez le jeûne à sa vue. » — Hadith';
+
+    final unit = _buildHadithTickerUnit(translation);
+
+    return Container(
+      height: 38,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF1A1F46).withOpacity(0.92),
+            const Color(0xFF0E122E).withOpacity(0.92),
+          ],
+        ),
+        border: Border.all(color: kGold.withOpacity(0.55), width: 1.2),
+        boxShadow: [
+          BoxShadow(color: kGold.withOpacity(0.14), blurRadius: 14, spreadRadius: 0.5),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 38,
+            padding: const EdgeInsets.symmetric(horizontal: 11),
+            decoration: BoxDecoration(
+              borderRadius: const BorderRadius.horizontal(left: Radius.circular(19)),
+              gradient: LinearGradient(
+                colors: [
+                  kGold.withOpacity(0.24),
+                  kGold.withOpacity(0.08),
+                ],
+              ),
+              border: Border(right: BorderSide(color: kGold.withOpacity(0.35), width: 1)),
+            ),
+            child: const Center(
+              child: Icon(
+                Icons.nightlight_round,
+                size: 16,
+                color: kGold,
+                shadows: [Shadow(color: kGold, blurRadius: 8)],
+              ),
+            ),
+          ),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: const BorderRadius.horizontal(right: Radius.circular(19)),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const NeverScrollableScrollPhysics(),
+                child: AnimatedBuilder(
+                  animation: _marqueeCtrl,
+                  builder: (context, child) {
+                    double unitW = 640.0;
+                    final ctx = _tickerUnitKey.currentContext;
+                    if (ctx != null) {
+                      final box = ctx.findRenderObject() as RenderBox?;
+                      if (box != null && box.hasSize && box.size.width > 50) {
+                        unitW = box.size.width;
+                      }
+                    }
+                    return Transform.translate(
+                      offset: Offset(-_marqueeCtrl.value * unitW, 0),
+                      child: child,
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        KeyedSubtree(key: _tickerUnitKey, child: unit),
+                        unit,
+                        unit,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2502,6 +2613,71 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: _gpsLoading ? null : _authorizeAndDetectGps,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: kCyan.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: kCyan.withOpacity(0.45)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_gpsLoading)
+                          const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: kCyan))
+                        else
+                          const Icon(Icons.my_location_rounded, size: 13, color: kCyan),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'GPS : ${_city.name}',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: kCyan, fontSize: 11, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => setState(() => _modal = _isGuest ? _PhoneModal.guestRestriction : _PhoneModal.bulletin),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: kGold.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: kGold.withOpacity(0.45)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(_isGuest ? Icons.lock_outline_rounded : Icons.picture_as_pdf_rounded, size: 13, color: kGold),
+                        const SizedBox(width: 6),
+                        const Flexible(
+                          child: Text(
+                            'Bulletin PDF',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(color: kGold, fontSize: 11, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
