@@ -57,6 +57,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   DialCountry _dialCountry = kWestAfricaDialCodes[0];
   String? _preferredCountryCode;
+  String _lang = 'fr';
+
+  bool get _isEn => _lang == 'en';
+  String _tr(String fr, String en) => _isEn ? en : fr;
+  String get _countryLabel => localizedCountryName(_city.countryCode, _city.country, _lang);
+
+  void _setLanguage(String newLang) {
+    if (_lang == newLang) return;
+    setState(() => _lang = newLang);
+    if (_stage == _AppStage.ready) {
+      _loadAllForCurrentCity();
+    }
+  }
+
+  Widget _buildLangSwitchBadge() {
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => _setLanguage(_isEn ? 'fr' : 'en'),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: kCyan.withOpacity(0.55)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.translate_rounded, size: 12, color: kCyan),
+            const SizedBox(width: 4),
+            Text(
+              _isEn ? 'EN' : 'FR',
+              style: const TextStyle(color: kCyan, fontSize: 10.5, fontWeight: FontWeight.w900),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   final TextEditingController _firstNameCtrl = TextEditingController();
   final TextEditingController _lastNameCtrl = TextEditingController();
@@ -155,7 +194,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final pass = _passCtrl.text.trim();
 
     if (_isSignUp && (firstName.isEmpty || lastName.isEmpty)) {
-      setState(() => _authError = 'Veuillez renseigner votre prénom et votre nom.');
+      setState(() => _authError = _tr(
+            'Veuillez renseigner votre prénom et votre nom.',
+            'Please enter your first and last name.',
+          ));
       return;
     }
 
@@ -164,16 +206,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_loginWithPhone) {
       final rawPhone = _phoneCtrl.text.trim();
       if (rawPhone.length < 5) {
-        setState(() => _authError = 'Veuillez saisir un numéro de téléphone valide.');
+        setState(() => _authError = _tr(
+              'Veuillez saisir un numéro de téléphone valide.',
+              'Please enter a valid phone number.',
+            ));
         return;
       }
       contact = '${_dialCountry.dial} $rawPhone';
       channel = 'sms';
       _preferredCountryCode = _dialCountry.code;
+      _lang = langForCountry(_dialCountry.code);
     } else {
       final email = _emailCtrl.text.trim();
       if (email.isEmpty || !email.contains('@')) {
-        setState(() => _authError = 'Veuillez saisir une adresse e-mail valide.');
+        setState(() => _authError = _tr(
+              'Veuillez saisir une adresse e-mail valide.',
+              'Please enter a valid email address.',
+            ));
         return;
       }
       contact = email;
@@ -182,7 +231,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
 
     if (pass.length < 4) {
-      setState(() => _authError = 'Veuillez définir un mot de passe (4 caractères min.).');
+      setState(() => _authError = _tr(
+            'Veuillez définir un mot de passe (4 caractères min.).',
+            'Please set a password (at least 4 characters).',
+          ));
       return;
     }
 
@@ -206,7 +258,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
       } catch (_) {
         if (!mounted) return;
-        setState(() => _authError = "Impossible d'envoyer le code de vérification.");
+        setState(() => _authError = _tr(
+              "Impossible d'envoyer le code de vérification.",
+              'Unable to send the verification code.',
+            ));
       } finally {
         if (mounted) setState(() => _authBusy = false);
       }
@@ -229,7 +284,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     setState(() => _authError = null);
     final code = _otpCtrl.text.trim();
     if (code.length < 4) {
-      setState(() => _authError = 'Veuillez saisir le code à 6 chiffres reçu.');
+      setState(() => _authError = _tr(
+            'Veuillez saisir le code à 6 chiffres reçu.',
+            'Please enter the 6-digit verification code.',
+          ));
       return;
     }
     setState(() => _authBusy = true);
@@ -251,7 +309,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _authError = 'Code de vérification incorrect.');
+      setState(() => _authError = _tr(
+            'Code de vérification incorrect.',
+            'Incorrect verification code.',
+          ));
     } finally {
       if (mounted) setState(() => _authBusy = false);
     }
@@ -273,7 +334,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       setState(() => _otpPreviewCode = (res['code_preview'] as String?) ?? '');
     } catch (_) {
       if (!mounted) return;
-      setState(() => _authError = 'Impossible de renvoyer le code.');
+      setState(() => _authError = _tr(
+            'Impossible de renvoyer le code.',
+            'Unable to resend the verification code.',
+          ));
     } finally {
       if (mounted) setState(() => _authBusy = false);
     }
@@ -309,15 +373,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _authorizeAndDetectGps() async {
     setState(() => _gpsLoading = true);
     try {
-      final info = await Api.gpsLocate(countryCode: _preferredCountryCode);
+      final targetLang = _preferredCountryCode != null ? langForCountry(_preferredCountryCode!) : null;
+      final info = await Api.gpsLocate(countryCode: _preferredCountryCode, lang: targetLang);
       if (!mounted) return;
       final detected = City.fromJson(info);
+      final autoLang = langForCountry(detected.countryCode);
       final rawCities = (info['country_cities'] as List?) ?? [];
       final parsedCities = rawCities.isNotEmpty
           ? rawCities.cast<Map<String, dynamic>>().map(City.fromJson).toList()
           : kDefaultCountryCities;
       setState(() {
         _city = detected;
+        _lang = autoLang;
         _countryCities = parsedCities;
         _regionCount = (info['region_count'] as int?) ?? 14;
         _stage = _AppStage.ready;
@@ -327,6 +394,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (!mounted) return;
       setState(() {
         _city = kDefaultCountryCities[0];
+        _lang = langForCountry(_city.countryCode);
         _countryCities = kDefaultCountryCities;
         _regionCount = 14;
         _stage = _AppStage.ready;
@@ -355,10 +423,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _errorEvening = null;
     });
     try {
-      final res = await Api.evening(_city, _date);
+      final res = await Api.evening(_city, _date, lang: _lang);
       if (mounted) setState(() => _eveningData = res);
     } catch (_) {
-      if (mounted) setState(() => _errorEvening = 'Impossible de charger les données de la soirée.');
+      if (mounted) {
+        setState(() => _errorEvening = _tr(
+              'Impossible de charger les données de la soirée.',
+              'Unable to load evening data.',
+            ));
+      }
     } finally {
       if (mounted) setState(() => _loadingEvening = false);
     }
@@ -370,7 +443,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _errorMonth = null;
     });
     try {
-      final res = await Api.month(_city, _calYear, _calMonth);
+      final res = await Api.month(_city, _calYear, _calMonth, lang: _lang);
       if (mounted) {
         setState(() {
           _monthData = res;
@@ -385,7 +458,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _errorMonth = 'Impossible de charger le calendrier mensuel.');
+      if (mounted) {
+        setState(() => _errorMonth = _tr(
+              'Impossible de charger le calendrier mensuel.',
+              'Unable to load the monthly calendar.',
+            ));
+      }
     } finally {
       if (mounted) setState(() => _loadingMonth = false);
     }
@@ -398,11 +476,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
     try {
       final res = _targetHijriMonth == 0
-          ? await Api.hilal(_city, DateTime.now())
-          : await Api.hijriMonth(_city, _targetHijriMonth);
+          ? await Api.hilal(_city, DateTime.now(), lang: _lang)
+          : await Api.hijriMonth(_city, _targetHijriMonth, lang: _lang);
       if (mounted) setState(() => _hilalData = res);
     } catch (_) {
-      if (mounted) setState(() => _errorHilal = 'Impossible de charger les prévisions du Hilal.');
+      if (mounted) {
+        setState(() => _errorHilal = _tr(
+              'Impossible de charger les prévisions du Hilal.',
+              'Unable to load Hilal forecasts.',
+            ));
+      }
     } finally {
       if (mounted) setState(() => _loadingHilal = false);
     }
@@ -419,6 +502,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         date: _date,
         hijriMonth: _regionHijriMonth,
         dayOffset: _regionDayOffset,
+        lang: _lang,
       );
       if (mounted) {
         setState(() {
@@ -428,7 +512,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _errorRegions = 'Impossible de charger les régions.');
+      if (mounted) {
+        setState(() => _errorRegions = _tr(
+              'Impossible de charger les régions.',
+              'Unable to load regions.',
+            ));
+      }
     } finally {
       if (mounted) setState(() => _loadingRegions = false);
     }
@@ -496,11 +585,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               const Icon(Icons.phone_android_rounded, color: kGold, size: 18),
               const SizedBox(width: 8),
               Text(
-                _phoneMode ? 'Téléphone Virtuel Mobile • WeerWi' : 'Mode Observatoire Grand Écran',
+                _phoneMode
+                    ? _tr('Téléphone Virtuel Mobile • WeerWi', 'Virtual Mobile Phone • WeerWi')
+                    : _tr('Mode Observatoire Grand Écran', 'Widescreen Observatory Mode'),
                 style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
               ),
             ],
           ),
+          _buildLangSwitchBadge(),
           InkWell(
             borderRadius: BorderRadius.circular(20),
             onTap: () => setState(() => _phoneMode = !_phoneMode),
@@ -516,7 +608,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Icon(_phoneMode ? Icons.fullscreen_rounded : Icons.smartphone_rounded, size: 15, color: kInk),
                   const SizedBox(width: 6),
                   Text(
-                    _phoneMode ? 'Plein écran' : 'Téléphone Virtuel',
+                    _phoneMode ? _tr('Plein écran', 'Full Screen') : _tr('Téléphone Virtuel', 'Virtual Phone'),
                     style: const TextStyle(color: kInk, fontSize: 11.5, fontWeight: FontWeight.w900),
                   ),
                 ],
@@ -700,10 +792,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(height: 3),
-              const Text(
-                'Observatoire scientifique du croissant lunaire',
+              Text(
+                _tr(
+                  'Observatoire scientifique du croissant lunaire',
+                  'Scientific Lunar Crescent Observatory',
+                ),
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white70, fontSize: 12),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
               const SizedBox(height: 16),
 
@@ -738,7 +833,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   gradient: !_isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
                                 child: Text(
-                                  'Se connecter',
+                                  _tr('Se connecter', 'Sign In'),
                                   style: TextStyle(
                                     color: !_isSignUp ? kInk : Colors.white70,
                                     fontWeight: FontWeight.w900,
@@ -762,7 +857,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   gradient: _isSignUp ? const LinearGradient(colors: [kGoldDeep, kGold]) : null,
                                 ),
                                 child: Text(
-                                  'Créer un compte',
+                                  _tr('Créer un compte', 'Create Account'),
                                   style: TextStyle(
                                     color: _isSignUp ? kInk : Colors.white70,
                                     fontWeight: FontWeight.w900,
@@ -784,7 +879,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           Expanded(
                             child: _uniformTextField(
                               controller: _firstNameCtrl,
-                              hint: 'Prénom',
+                              hint: _tr('Prénom', 'First Name'),
                               prefixIcon: Icons.person_outline_rounded,
                             ),
                           ),
@@ -792,7 +887,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           Expanded(
                             child: _uniformTextField(
                               controller: _lastNameCtrl,
-                              hint: 'Nom',
+                              hint: _tr('Nom', 'Last Name'),
                             ),
                           ),
                         ],
@@ -824,7 +919,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       size: 15, color: _loginWithPhone ? kCyan : Colors.white60),
                                   const SizedBox(width: 6),
                                   Text(
-                                    'Par Téléphone',
+                                    _tr('Par Téléphone', 'By Phone'),
                                     style: TextStyle(
                                       color: _loginWithPhone ? kCyan : Colors.white60,
                                       fontWeight: FontWeight.w800,
@@ -858,7 +953,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                       size: 15, color: !_loginWithPhone ? kCyan : Colors.white60),
                                   const SizedBox(width: 6),
                                   Text(
-                                    'Par E-mail',
+                                    _tr('Par E-mail', 'By Email'),
                                     style: TextStyle(
                                       color: !_loginWithPhone ? kCyan : Colors.white60,
                                       fontWeight: FontWeight.w800,
@@ -912,7 +1007,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           Expanded(
                             child: _uniformTextField(
                               controller: _phoneCtrl,
-                              hint: 'Numéro (${_dialCountry.name})',
+                              hint: _tr('Numéro (${_dialCountry.label(_lang)})', 'Phone (${_dialCountry.label(_lang)})'),
                               keyboardType: TextInputType.phone,
                             ),
                           ),
@@ -921,7 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ] else ...[
                       _uniformTextField(
                         controller: _emailCtrl,
-                        hint: 'Adresse e-mail (exemple@email.com)',
+                        hint: _tr('Adresse e-mail (exemple@email.com)', 'Email address (example@email.com)'),
                         prefixIcon: Icons.mail_outline_rounded,
                         prefixColor: kCyan,
                         keyboardType: TextInputType.emailAddress,
@@ -931,7 +1026,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(height: 10),
                     _uniformTextField(
                       controller: _passCtrl,
-                      hint: _isSignUp ? 'Créer un mot de passe' : 'Mot de passe',
+                      hint: _isSignUp
+                          ? _tr('Créer un mot de passe', 'Create a password')
+                          : _tr('Mot de passe', 'Password'),
                       prefixIcon: Icons.lock_outline_rounded,
                       prefixColor: kViolet,
                       obscure: _obscurePassword,
@@ -968,7 +1065,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                 child: CircularProgressIndicator(strokeWidth: 2.2, color: kInk),
                               )
                             : Text(
-                                _isSignUp ? 'Créer mon compte & Recevoir le code' : 'Se connecter',
+                                _isSignUp
+                                    ? _tr('Créer mon compte & Recevoir le code', 'Create Account & Receive Code')
+                                    : _tr('Se connecter', 'Sign In'),
                                 style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5),
                               ),
                       ),
@@ -978,9 +1077,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     Row(
                       children: [
                         Expanded(child: Divider(color: Colors.white.withOpacity(0.14))),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 10),
-                          child: Text('OU', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Text(_tr('OU', 'OR'), style: const TextStyle(color: Colors.white38, fontSize: 10)),
                         ),
                         Expanded(child: Divider(color: Colors.white.withOpacity(0.14))),
                       ],
@@ -998,9 +1097,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                         icon: const Icon(Icons.apple_rounded, size: 20, color: Colors.black),
-                        label: const Text(
-                          'Continuer avec Apple',
-                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.black),
+                        label: Text(
+                          _tr('Continuer avec Apple', 'Continue with Apple'),
+                          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5, color: Colors.black),
                         ),
                       ),
                     ),
@@ -1013,9 +1112,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         padding: const EdgeInsets.symmetric(vertical: 6),
                       ),
                       icon: const Icon(Icons.explore_outlined, size: 15, color: Colors.white70),
-                      label: const Text(
-                        'Continuer sans créer de compte (Mode Invité)',
-                        style: TextStyle(
+                      label: Text(
+                        _tr(
+                          'Continuer sans créer de compte (Mode Invité)',
+                          'Continue without an account (Guest Mode)',
+                        ),
+                        style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
@@ -1065,12 +1167,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                isSms ? 'Nouveau SMS reçu • WeerWi' : 'Nouvel E-mail reçu • WeerWi',
+                                isSms
+                                    ? _tr('Nouveau SMS reçu • WeerWi', 'New SMS Received • WeerWi')
+                                    : _tr('Nouvel E-mail reçu • WeerWi', 'New Email Received • WeerWi'),
                                 style: const TextStyle(color: kGreen, fontWeight: FontWeight.w900, fontSize: 11.5),
                               ),
                               const SizedBox(height: 2),
                               Text(
-                                'Code de validation : $_otpPreviewCode (Appuyez pour remplir)',
+                                _tr(
+                                  'Code de validation : $_otpPreviewCode (Appuyez pour remplir)',
+                                  'Verification code: $_otpPreviewCode (Tap to autofill)',
+                                ),
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12.5),
                               ),
                             ],
@@ -1103,13 +1210,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 16),
                     Text(
-                      isSms ? 'Vérification par SMS' : 'Vérification par E-mail',
+                      isSms
+                          ? _tr('Vérification par SMS', 'SMS Verification')
+                          : _tr('Vérification par E-mail', 'Email Verification'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Nous avons envoyé un code à 6 chiffres à :\n${_pendingContact ?? ''}',
+                      _tr(
+                        'Nous avons envoyé un code à 6 chiffres à :\n${_pendingContact ?? ''}',
+                        'We sent a 6-digit verification code to:\n${_pendingContact ?? ''}',
+                      ),
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.45),
                     ),
@@ -1150,9 +1262,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         ),
                         icon: const Icon(Icons.check_circle_rounded, size: 18),
-                        label: const Text(
-                          'Valider le code & Activer mon compte',
-                          style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5),
+                        label: Text(
+                          _tr('Valider le code & Activer mon compte', 'Verify Code & Activate Account'),
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13.5),
                         ),
                       ),
                     ),
@@ -1165,11 +1277,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             _stage = _AppStage.login;
                             _authError = null;
                           }),
-                          child: const Text('← Modifier mes infos', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                          child: Text(_tr('← Modifier mes infos', '← Edit my info'),
+                              style: const TextStyle(color: Colors.white60, fontSize: 12)),
                         ),
                         TextButton(
                           onPressed: _authBusy ? null : _resendOtpCode,
-                          child: const Text('Renvoyer le code', style: TextStyle(color: kCyan, fontSize: 12)),
+                          child: Text(_tr('Renvoyer le code', 'Resend code'),
+                              style: const TextStyle(color: kCyan, fontSize: 12)),
                         ),
                       ],
                     ),
@@ -1208,16 +1322,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   child: const Icon(Icons.my_location_rounded, color: kCyan, size: 36),
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Autoriser votre localisation',
+                Text(
+                  _tr('Autoriser votre localisation', 'Allow Your Location'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+                  style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  'WeerWi utilise votre position GPS pour configurer automatiquement l’observatoire lunaire sur votre localité et afficher uniquement les régions de votre pays.',
+                Text(
+                  _tr(
+                    'WeerWi utilise votre position GPS pour configurer automatiquement l’observatoire lunaire sur votre localité et afficher uniquement les régions de votre pays.',
+                    'WeerWi uses your GPS position to automatically configure the lunar observatory for your locality and display only the regions of your country.',
+                  ),
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
                 ),
                 const SizedBox(height: 22),
                 SizedBox(
@@ -1238,7 +1355,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           )
                         : const Icon(Icons.location_on_rounded, size: 19),
                     label: Text(
-                      _gpsLoading ? 'Détection GPS en cours…' : 'Autoriser la localisation GPS',
+                      _gpsLoading
+                          ? _tr('Détection GPS en cours…', 'Detecting GPS location…')
+                          : _tr('Autoriser la localisation GPS', 'Allow GPS Location'),
                       style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14),
                     ),
                   ),
@@ -1246,9 +1365,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: () => setState(() => _stage = _AppStage.login),
-                  child: const Text(
-                    '← Retour à l’écran de connexion',
-                    style: TextStyle(color: Colors.white54, fontSize: 12),
+                  child: Text(
+                    _tr('← Retour à l’écran de connexion', '← Back to Sign In'),
+                    style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                 ),
               ],
@@ -1315,10 +1434,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               const Icon(Icons.public_rounded, color: kGold, size: 20),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Indicatif Pays (Afrique de l’Ouest)',
-                  style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
+                  _tr('Indicatif Pays (Afrique de l’Ouest)', 'Country Dial Code (West Africa)'),
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900),
                 ),
               ),
               IconButton(
@@ -1342,6 +1461,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   onTap: () {
                     setState(() {
                       _dialCountry = item;
+                      _preferredCountryCode = item.code;
+                      _lang = langForCountry(item.code);
                       _modal = _PhoneModal.none;
                     });
                   },
@@ -1357,7 +1478,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            item.name,
+                            item.label(_lang),
                             style: TextStyle(
                               color: sel ? kGold : Colors.white,
                               fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
@@ -1425,7 +1546,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 12),
           Text(
-            _userFullName ?? 'Compte connecté',
+            _userFullName ?? _tr('Compte connecté', 'Connected Account'),
             style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 4),
@@ -1447,7 +1568,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Zone GPS : ${_city.flag} ${_city.name} (${_city.country})',
+                    '${_tr('Zone GPS', 'GPS Zone')} : ${_city.flag} ${_city.name} ($_countryLabel)',
                     style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -1472,7 +1593,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           _authorizeAndDetectGps();
                         },
                   icon: const Icon(Icons.my_location_rounded, size: 14),
-                  label: const Text('Actualiser GPS', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                  label: Text(_tr('Actualiser GPS', 'Refresh GPS'),
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1486,7 +1608,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                   onPressed: () => setState(() => _modal = _PhoneModal.bulletin),
                   icon: const Icon(Icons.picture_as_pdf_rounded, size: 14),
-                  label: const Text('Bulletin PDF', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
+                  label: Text(_tr('Bulletin PDF', 'PDF Bulletin'),
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
                 ),
               ),
             ],
@@ -1497,7 +1620,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Expanded(
                 child: TextButton(
                   onPressed: () => setState(() => _modal = _PhoneModal.none),
-                  child: const Text('Fermer', style: TextStyle(color: Colors.white70)),
+                  child: Text(_tr('Fermer', 'Close'), style: const TextStyle(color: Colors.white70)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1522,7 +1645,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     });
                   },
                   icon: const Icon(Icons.logout_rounded, size: 15),
-                  label: const Text('Déconnexion', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  label: Text(_tr('Déconnexion', 'Sign Out'),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                 ),
               ),
             ],
@@ -1554,17 +1678,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: const Icon(Icons.lock_person_rounded, color: kGold, size: 28),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'Réservé aux membres inscrits',
+          Text(
+            _tr('Réservé aux membres inscrits', 'Registered Members Only'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w900),
+            style: const TextStyle(color: Colors.white, fontSize: 16.5, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'En mode Invité, vous avez accès librement à l’observatoire du soir, à la boussole, au calendrier et aux régions de votre pays.\n\n'
-            'L’export du Bulletin Scientifique Officiel PDF certifié nécessite la création gratuite d’un compte WeerWi.',
+          Text(
+            _tr(
+              'En mode Invité, vous avez accès librement à l’observatoire du soir, à la boussole, au calendrier et aux régions de votre pays.\n\n'
+              'L’export du Bulletin Scientifique Officiel PDF certifié nécessite la création gratuite d’un compte WeerWi.',
+              'In Guest Mode, you have free access to the evening observatory, compass, calendar, and regions of your country.\n\n'
+              'Exporting the certified Official Scientific PDF Bulletin requires creating a free WeerWi account.',
+            ),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.45),
+            style: const TextStyle(color: Colors.white70, fontSize: 12.5, height: 1.45),
           ),
           const SizedBox(height: 18),
           Row(
@@ -1572,7 +1700,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Expanded(
                 child: TextButton(
                   onPressed: () => setState(() => _modal = _PhoneModal.none),
-                  child: const Text('Plus tard', style: TextStyle(color: Colors.white60)),
+                  child: Text(_tr('Plus tard', 'Later'), style: const TextStyle(color: Colors.white60)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1591,7 +1719,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     });
                   },
                   icon: const Icon(Icons.person_add_alt_1_rounded, size: 15),
-                  label: const Text('Créer un compte', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                  label: Text(_tr('Créer un compte', 'Create Account'),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
                 ),
               ),
             ],
@@ -1605,12 +1734,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final d = _eveningData;
     final r = _regionsData;
     final sen = (r?['sentinel'] as Map<String, dynamic>?) ?? {};
-    final url = Api.bulletinUrl(_city, _date, _regionHijriMonth);
+    final url = Api.bulletinUrl(_city, _date, _regionHijriMonth, lang: _lang);
 
-    final reportText = '''
+    final reportText = _isEn
+        ? '''
+🌙 WEERWI OFFICIAL ASTRONOMICAL BULLETIN
+📍 Locality: ${_city.flag} ${_city.name} ($_countryLabel)
+📅 Evening: ${d?['date_label'] ?? frDate(_date, weekday: true, lang: _lang)}
+🔭 Verdict: ${d?['badge_text'] ?? '—'}
+
+🌅 Sunset: ${d?['sunset'] ?? '—'} | 🌙 Moonset: ${d?['moonset'] ?? '—'} (Lag: ${d?['lag_minutes'] ?? '—'} min)
+🧭 Sighting: Azimuth ${d?['moon_azimuth_deg'] ?? '—'}° (${d?['cardinal_direction'] ?? 'W'}) • Altitude ${d?['altitude_deg'] ?? '—'}°
+🌓 Phase: ${d?['phase'] ?? '—'} (${d?['illumination'] ?? '—'}%) • Age: ${d?['age_hours'] ?? '—'} h
+🌪️ Atmosphere: ${d?['turbulence_level'] ?? '—'}
+
+🏆 Sentinel Point ($_countryLabel): ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
+📌 Summary: ${d?['observation_tip'] ?? ''}
+🕌 Context: ${d?['ramadan_status'] ?? ''}
+(Source: WeerWi • NASA JPL DE421 Ephemeris • Yallop & Odeh Criteria)'''
+        : '''
 🌙 BULLETIN ASTRONOMIQUE OFFICIEL WEERWI
-📍 Localité : ${_city.flag} ${_city.name} (${_city.country})
-📅 Soirée : ${d?['date_label'] ?? frDate(_date, weekday: true)}
+📍 Localité : ${_city.flag} ${_city.name} ($_countryLabel)
+📅 Soirée : ${d?['date_label'] ?? frDate(_date, weekday: true, lang: _lang)}
 🔭 Verdict : ${d?['badge_text'] ?? '—'}
 
 🌅 Coucher Soleil : ${d?['sunset'] ?? '—'} | 🌙 Coucher Lune : ${d?['moonset'] ?? '—'} (Lag : ${d?['lag_minutes'] ?? '—'} min)
@@ -1618,7 +1763,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 🌓 Phase : ${d?['phase'] ?? '—'} (${d?['illumination'] ?? '—'}%) • Âge : ${d?['age_hours'] ?? '—'} h
 🌪️ Atmosphère : ${d?['turbulence_level'] ?? '—'}
 
-🏆 Point Sentinelle (${_city.country}) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
+🏆 Point Sentinelle ($_countryLabel) : ${sen['name'] ?? _city.name} (${sen['region'] ?? ''}) — Odeh V = ${sen['odeh_v'] ?? '—'}
 📌 Synthèse : ${d?['observation_tip'] ?? ''}
 🕌 Contexte : ${d?['ramadan_status'] ?? ''}
 (Source : WeerWi • Éphémérides NASA JPL DE421 • Critères de Yallop & Odeh)''';
@@ -1639,10 +1784,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             children: [
               const Icon(Icons.picture_as_pdf_rounded, color: kGold, size: 20),
               const SizedBox(width: 8),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Bulletin Scientifique Officiel',
-                  style: TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.w900),
+                  _tr('Bulletin Scientifique Officiel', 'Official Scientific Bulletin'),
+                  style: const TextStyle(color: Colors.white, fontSize: 15.5, fontWeight: FontWeight.w900),
                 ),
               ),
               IconButton(
@@ -1683,11 +1828,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: url));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Lien du Bulletin PDF copié !')),
+                      SnackBar(content: Text(_tr('Lien du Bulletin PDF copié !', 'PDF Bulletin link copied!'))),
                     );
                   },
                   icon: const Icon(Icons.link_rounded, size: 15),
-                  label: const Text('Lien PDF', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                  label: Text(_tr('Lien PDF', 'PDF Link'),
+                      style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1703,11 +1849,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     Clipboard.setData(ClipboardData(text: reportText));
                     setState(() => _modal = _PhoneModal.none);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('📋 Bulletin copié pour WhatsApp !')),
+                      SnackBar(
+                        content: Text(_tr('📋 Bulletin copié pour WhatsApp !', '📋 Bulletin copied for WhatsApp!')),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.copy_rounded, size: 15),
-                  label: const Text('Copier texte', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+                  label: Text(_tr('Copier texte', 'Copy Text'),
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
                 ),
               ),
             ],
@@ -1756,10 +1905,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildAndroidBottomNav() {
     final items = [
-      (0, Icons.nightlight_round, 'Ce soir'),
-      (1, Icons.calendar_month_rounded, 'Calendrier'),
+      (0, Icons.nightlight_round, _tr('Ce soir', 'Tonight')),
+      (1, Icons.calendar_month_rounded, _tr('Calendrier', 'Calendar')),
       (2, Icons.mosque_rounded, 'Ramadan'),
-      (3, Icons.map_rounded, 'Régions'),
+      (3, Icons.map_rounded, _tr('Régions', 'Regions')),
     ];
     return Container(
       decoration: BoxDecoration(
@@ -1873,12 +2022,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
               Text(
-                '${_city.flag} Observatoire national • ${_city.country}',
+                '${_city.flag} ${_tr('Observatoire national', 'National Observatory')} • $_countryLabel',
                 style: const TextStyle(color: Colors.white60, fontSize: 11),
               ),
             ],
           ),
         ),
+        _buildLangSwitchBadge(),
+        const SizedBox(width: 6),
         if (_isGuest)
           InkWell(
             borderRadius: BorderRadius.circular(20),
@@ -1890,14 +2041,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: kGold.withOpacity(0.55)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.person_add_alt_1_rounded, size: 14, color: kGold),
-                  SizedBox(width: 5),
+                  const Icon(Icons.person_add_alt_1_rounded, size: 14, color: kGold),
+                  const SizedBox(width: 5),
                   Text(
-                    'Invité • Connexion',
-                    style: TextStyle(color: kGold, fontSize: 10.5, fontWeight: FontWeight.w800),
+                    _tr('Invité • Connexion', 'Guest • Sign In'),
+                    style: const TextStyle(color: kGold, fontSize: 10.5, fontWeight: FontWeight.w800),
                   ),
                 ],
               ),
@@ -1908,7 +2059,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             customBorder: const CircleBorder(),
             onTap: () => setState(() => _modal = _PhoneModal.profile),
             child: Tooltip(
-              message: 'Mon profil',
+              message: _tr('Mon profil', 'My Profile'),
               child: SizedBox(
                 width: 40,
                 height: 40,
@@ -1953,8 +2104,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   String _maskedIdentity(String? raw) {
-    if (raw == null || raw.isEmpty) return 'Session active';
-    if (raw == 'Compte Apple') return 'Identifiant Apple vérifié';
+    if (raw == null || raw.isEmpty) return _tr('Session active', 'Active Session');
+    if (raw == 'Compte Apple') return _tr('Identifiant Apple vérifié', 'Verified Apple ID');
     if (raw.contains('@')) {
       final parts = raw.split('@');
       final u = parts.first;
@@ -1964,7 +2115,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (raw.length > 6) {
       return '${raw.substring(0, 4)} ••• •• ${raw.substring(raw.length - 2)}';
     }
-    return 'Compte vérifié';
+    return _tr('Compte vérifié', 'Verified Account');
   }
 
   bool _isEnglishSpeakingCountry(String countryCode) {
@@ -2011,8 +2162,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildHadithMarqueeBanner() {
-    final isEn = _isEnglishSpeakingCountry(_city.countryCode);
-    final translation = isEn
+    final translation = _isEn
         ? '“Fast when you see it, and break your fast when you see it.” — Hadith'
         : '« Jeûnez à sa vue et rompez le jeûne à sa vue. » — Hadith';
 
@@ -2104,7 +2254,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SectionTitle(
-          'LOCALITÉS DE VOTRE PAYS • ${_city.country.toUpperCase()} (${_city.flag})',
+          '${_tr('LOCALITÉS DE VOTRE PAYS', 'LOCALITIES IN YOUR COUNTRY')} • ${_countryLabel.toUpperCase()} (${_city.flag})',
           icon: Icons.place_rounded,
         ),
         const SizedBox(height: 8),
@@ -2153,10 +2303,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildNavigationTabs() {
     final items = [
-      (0, Icons.nightlight_round, 'Ce soir • Observatoire'),
-      (1, Icons.calendar_month_rounded, 'Calendrier Mensuel'),
+      (0, Icons.nightlight_round, _tr('Ce soir • Observatoire', 'Tonight • Observatory')),
+      (1, Icons.calendar_month_rounded, _tr('Calendrier Mensuel', 'Monthly Calendar')),
       (2, Icons.mosque_rounded, 'Hilal & Ramadan'),
-      (3, Icons.map_rounded, 'Régions'),
+      (3, Icons.map_rounded, _tr('Régions', 'Regions')),
     ];
     return Container(
       padding: const EdgeInsets.all(6),
@@ -2210,13 +2360,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final d = _eveningData;
     final illum = toD(d?['illumination']) ?? 50.0;
     final waxing = (d?['waxing'] as bool?) ?? true;
-    final phase = (d?['phase'] as String?) ?? 'Scan du ciel…';
-    final badgeText = (d?['badge_text'] as String?) ?? 'ANALYSE EN COURS';
+    final phase = (d?['phase'] as String?) ?? _tr('Scan du ciel…', 'Scanning the sky…');
+    final badgeText = (d?['badge_text'] as String?) ?? _tr('ANALYSE EN COURS', 'ANALYZING');
     final badgeLevel = (d?['badge_level'] as String?) ?? 'maybe';
     final badgeCol = levelColor(badgeLevel);
 
+    final ew = _city.lon >= 0 ? 'E' : (_isEn ? 'W' : 'O');
     final coords =
-        '${_city.lat.abs().toStringAsFixed(2)}°${_city.lat >= 0 ? 'N' : 'S'} · ${_city.lon.abs().toStringAsFixed(2)}°${_city.lon >= 0 ? 'E' : 'O'} · UTC${_city.tz >= 0 ? '+${_city.tz.toInt()}' : '${_city.tz.toInt()}'}';
+        '${_city.lat.abs().toStringAsFixed(2)}°${_city.lat >= 0 ? 'N' : 'S'} · ${_city.lon.abs().toStringAsFixed(2)}°$ew · UTC${_city.tz >= 0 ? '+${_city.tz.toInt()}' : '${_city.tz.toInt()}'}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2261,7 +2412,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
             const SizedBox(height: 4),
             Text(
-              '${_city.flag}  ${_city.name}, ${_city.country}  •  ${frDate(_date, weekday: true)}',
+              '${_city.flag}  ${_city.name}, $_countryLabel  •  ${frDate(_date, weekday: true, lang: _lang)}',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
@@ -2269,7 +2420,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Text('📡 $coords', style: TextStyle(color: kCyan.withOpacity(0.75), fontSize: 11, letterSpacing: 1.2)),
             const SizedBox(height: 12),
             if (_loadingEvening)
-              const LoadingBlock('Calcul topocentrique au coucher du Soleil…')
+              LoadingBlock(_tr(
+                'Calcul topocentrique au coucher du Soleil…',
+                'Topocentric calculation at sunset…',
+              ))
             else if (d != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
@@ -2323,7 +2477,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 14),
           _buildLunarMonthContextCard(d),
           const SizedBox(height: 18),
-          const SectionTitle('INSTRUMENTS DE BORD AU COUCHER DU SOLEIL • NASA JPL DE421', icon: Icons.speed_rounded),
+          SectionTitle(
+            _tr(
+              'INSTRUMENTS DE BORD AU COUCHER DU SOLEIL • NASA JPL DE421',
+              'INSTRUMENTS AT SUNSET • NASA JPL DE421',
+            ),
+            icon: Icons.speed_rounded,
+          ),
           const SizedBox(height: 10),
           _buildEveningGauges(d),
         ],
@@ -2336,7 +2496,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final sunAz = toD(d['sun_azimuth_deg']) ?? 270.0;
     final moonAlt = toD(d['altitude_deg']) ?? 0.0;
     final daz = toD(d['daz_deg']) ?? 0.0;
-    final cardinal = (d['cardinal_direction'] as String?) ?? 'O';
+    final cardinal = (d['cardinal_direction'] as String?) ?? (_isEn ? 'W' : 'O');
     final turbLevel = (d['turbulence_level'] as String?) ?? 'Stable';
     final turbNote = (d['turbulence_note'] as String?) ?? '';
     final airmass = d['airmass'];
@@ -2347,13 +2507,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('BOUSSOLE DE VISÉE & TURBULENCE ATMOSPHÉRIQUE', icon: Icons.explore_rounded, color: kGold),
+          SectionTitle(
+            _tr(
+              'BOUSSOLE DE VISÉE & TURBULENCE ATMOSPHÉRIQUE',
+              'SIGHTING COMPASS & ATMOSPHERIC TURBULENCE',
+            ),
+            icon: Icons.explore_rounded,
+            color: kGold,
+          ),
           const SizedBox(height: 12),
           Row(
             children: [
               CustomPaint(
                 size: const Size(110, 110),
-                painter: CompassPainter(moonAz: moonAz, sunAz: sunAz, moonAlt: moonAlt),
+                painter: CompassPainter(
+                  moonAz: moonAz,
+                  sunAz: sunAz,
+                  moonAlt: moonAlt,
+                  westLabel: _isEn ? 'W' : 'O',
+                ),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -2361,12 +2533,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Direction Lune : ${moonAz.toStringAsFixed(1)}° ($cardinal)',
+                      '${_tr('Direction Lune', 'Moon Direction')} : ${moonAz.toStringAsFixed(1)}° ($cardinal)',
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Hauteur sur l’horizon : ${moonAlt.toStringAsFixed(1)}°',
+                      '${_tr('Hauteur sur l’horizon', 'Altitude above horizon')} : ${moonAlt.toStringAsFixed(1)}°',
                       style: TextStyle(
                         color: moonAlt > 0 ? kGreen : kRed,
                         fontWeight: FontWeight.bold,
@@ -2375,7 +2547,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      'Soleil : ${sunAz.toStringAsFixed(1)}°  •  Écart DAZ : ${daz.toStringAsFixed(1)}°',
+                      '${_tr('Soleil', 'Sun')} : ${sunAz.toStringAsFixed(1)}°  •  ${_tr('Écart DAZ', 'DAZ Offset')} : ${daz.toStringAsFixed(1)}°',
                       style: const TextStyle(color: Colors.white60, fontSize: 11.5),
                     ),
                     const SizedBox(height: 8),
@@ -2432,7 +2604,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        frDate(_date),
+                        frDate(_date, lang: _lang),
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12.5),
                       ),
@@ -2466,9 +2638,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 color: kCyan.withOpacity(0.14),
                 border: Border.all(color: kCyan.withOpacity(0.45)),
               ),
-              child: const Text(
-                "Aujourd'hui",
-                style: TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.w800),
+              child: Text(
+                _tr("Aujourd'hui", 'Today'),
+                style: const TextStyle(color: kCyan, fontSize: 11.5, fontWeight: FontWeight.w800),
               ),
             ),
           ),
@@ -2491,18 +2663,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     Color thirdColor;
     IconData thirdIcon;
     if (lag != null && lag > 0) {
-      thirdLabel = 'Décalage (Lag)';
+      thirdLabel = _tr('Décalage (Lag)', 'Sunset-Moonset Lag');
       thirdValue = '+$lag min';
       thirdColor = kGreen;
       thirdIcon = Icons.timelapse_rounded;
     } else if (moonriseTonight != null) {
-      thirdLabel = 'Lever Lune (Nuit)';
+      thirdLabel = _tr('Lever Lune (Nuit)', 'Moonrise (Night)');
       thirdValue = moonriseTonight;
       thirdColor = kGold;
       thirdIcon = Icons.light_mode_rounded;
     } else {
-      thirdLabel = 'Au coucher Soleil';
-      thirdValue = 'Sous l’horizon';
+      thirdLabel = _tr('Au coucher Soleil', 'At Sunset');
+      thirdValue = _tr('Sous l’horizon', 'Below horizon');
       thirdColor = kOrange;
       thirdIcon = Icons.timelapse_rounded;
     }
@@ -2513,13 +2685,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('ÉPHÉMÉRIDES DU CRÉPUSCULE & DE LA NUIT', icon: Icons.schedule_rounded, color: kCyan),
+          SectionTitle(
+            _tr('ÉPHÉMÉRIDES DU CRÉPUSCULE & DE LA NUIT', 'TWILIGHT & NIGHT EPHEMERIS'),
+            icon: Icons.schedule_rounded,
+            color: kCyan,
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
-              Expanded(child: _timeStat(Icons.wb_twilight_rounded, 'Coucher Soleil', sunset, kGold)),
+              Expanded(child: _timeStat(Icons.wb_twilight_rounded, _tr('Coucher Soleil', 'Sunset'), sunset, kGold)),
               const SizedBox(width: 10),
-              Expanded(child: _timeStat(Icons.nights_stay_rounded, 'Coucher Lune', moonset, kCyan)),
+              Expanded(child: _timeStat(Icons.nights_stay_rounded, _tr('Coucher Lune', 'Moonset'), moonset, kCyan)),
             ],
           ),
           const SizedBox(height: 10),
@@ -2530,8 +2706,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Expanded(
                 child: _timeStat(
                   presentTonight ? Icons.check_circle_outline_rounded : Icons.highlight_off_rounded,
-                  'Présence Nuit',
-                  presentTonight ? 'Présente' : 'Absente',
+                  _tr('Présence Nuit', 'Night Presence'),
+                  presentTonight ? _tr('Présente', 'Present') : _tr('Absente', 'Absent'),
                   presentTonight ? kGreen : kRed,
                 ),
               ),
@@ -2592,7 +2768,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('DIAGNOSTIC SCIENTIFIQUE DE L’OBSERVATOIRE', icon: Icons.auto_awesome_rounded, color: col),
+          SectionTitle(
+            _tr('DIAGNOSTIC SCIENTIFIQUE DE L’OBSERVATOIRE', 'OBSERVATORY SCIENTIFIC DIAGNOSTIC'),
+            icon: Icons.auto_awesome_rounded,
+            color: col,
+          ),
           const SizedBox(height: 8),
           Text(tip, style: const TextStyle(color: Colors.white, fontSize: 13.5, height: 1.45)),
           if (weatherNote.isNotEmpty) ...[
@@ -2664,11 +2844,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       children: [
                         Icon(_isGuest ? Icons.lock_outline_rounded : Icons.picture_as_pdf_rounded, size: 13, color: kGold),
                         const SizedBox(width: 6),
-                        const Flexible(
+                        Flexible(
                           child: Text(
-                            'Bulletin PDF',
+                            _tr('Bulletin PDF', 'PDF Bulletin'),
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: kGold, fontSize: 11, fontWeight: FontWeight.w800),
+                            style: const TextStyle(color: kGold, fontSize: 11, fontWeight: FontWeight.w800),
                           ),
                         ),
                       ],
@@ -2695,11 +2875,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('CRITÈRES SCIENTIFIQUES (YALLOP 1997 & ODEH 2004)', icon: Icons.science_rounded, color: kGold),
+          SectionTitle(
+            _tr('CRITÈRES SCIENTIFIQUES (YALLOP 1997 & ODEH 2004)', 'SCIENTIFIC CRITERIA (YALLOP 1997 & ODEH 2004)'),
+            icon: Icons.science_rounded,
+            color: kGold,
+          ),
           const SizedBox(height: 10),
           if (!possible)
             Text(
-              (c['verdict_text'] as String?) ?? 'Croissant géométriquement impossible ce soir.',
+              (c['verdict_text'] as String?) ??
+                  _tr(
+                    'Croissant géométriquement impossible ce soir.',
+                    'Crescent geometrically impossible tonight.',
+                  ),
               style: const TextStyle(color: kRed, fontWeight: FontWeight.bold, fontSize: 13.5),
             )
           else ...[
@@ -2707,16 +2895,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               spacing: 8,
               runSpacing: 8,
               children: [
-                Pill('Meilleur moment : $bestTime', kCyan, icon: Icons.access_time_filled_rounded),
+                Pill('${_tr('Meilleur moment', 'Best time')}: $bestTime', kCyan, icon: Icons.access_time_filled_rounded),
                 Pill('ARCV : ${c['arcv']}°', kGold),
                 Pill('ARCL : ${c['arcl']}°', kGold),
-                Pill("Largeur : ${c['width_arcmin']}'", kViolet),
+                Pill("${_tr('Largeur', 'Width')}: ${c['width_arcmin']}'", kViolet),
               ],
             ),
             const SizedBox(height: 12),
             if (odeh != null)
               _criterionRow(
-                'Critère d’Odeh (2004)',
+                _tr('Critère d’Odeh (2004)', 'Odeh Criterion (2004)'),
                 'Zone ${odeh['code']} (V=${odeh['v']})',
                 (odeh['text'] as String?) ?? '',
                 verdictColor(c['verdict_code'] as String?),
@@ -2724,7 +2912,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             const SizedBox(height: 8),
             if (yallop != null)
               _criterionRow(
-                'Critère de Yallop (1997)',
+                _tr('Critère de Yallop (1997)', 'Yallop Criterion (1997)'),
                 'Zone ${yallop['code']} (q=${yallop['q']})',
                 (yallop['text'] as String?) ?? '',
                 verdictColor(c['verdict_code'] as String?),
@@ -2772,8 +2960,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildLunarMonthContextCard(Map<String, dynamic> d) {
     final ramadan = (d['ramadan_status'] as String?) ?? '';
-    final lastNm = (d['last_new_moon'] as String?)?.replaceAll('T', ' à ') ?? '—';
-    final nextNm = (d['next_new_moon'] as String?)?.replaceAll('T', ' à ') ?? '—';
+    final sep = _isEn ? ' at ' : ' à ';
+    final lastNm = (d['last_new_moon'] as String?)?.replaceAll('T', sep) ?? '—';
+    final nextNm = (d['next_new_moon'] as String?)?.replaceAll('T', sep) ?? '—';
 
     return Glass(
       accent: kViolet,
@@ -2781,7 +2970,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionTitle('CONJONCTIONS & CONTEXTE DU MOIS LUNAIRE', icon: Icons.mosque_rounded, color: kViolet),
+          SectionTitle(
+            _tr('CONJONCTIONS & CONTEXTE DU MOIS LUNAIRE', 'CONJUNCTIONS & LUNAR MONTH CONTEXT'),
+            icon: Icons.mosque_rounded,
+            color: kViolet,
+          ),
           const SizedBox(height: 8),
           Text(ramadan,
               style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.4)),
@@ -2790,8 +2983,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             spacing: 8,
             runSpacing: 6,
             children: [
-              Pill('Dernière conjonction : $lastNm', kCyan),
-              Pill('Prochaine conjonction : $nextNm', kGold),
+              Pill('${_tr('Dernière conjonction', 'Last conjunction')}: $lastNm', kCyan),
+              Pill('${_tr('Prochaine conjonction', 'Next conjunction')}: $nextNm', kGold),
             ],
           ),
         ],
@@ -2809,7 +3002,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Si la hauteur est négative (sous l'horizon), jauge orange/rouge avec faible arc
     final altFraction = alt > 0 ? (alt / 90.0).clamp(0.05, 1.0) : 0.06;
     final altColor = alt > 0 ? kGreen : kOrange;
-    final altUnit = alt > 0 ? 'degrés' : 'sous horizon';
+    final altUnit = alt > 0 ? _tr('degrés', 'degrees') : _tr('sous horizon', 'below horizon');
 
     return Wrap(
       alignment: WrapAlignment.center,
@@ -2817,10 +3010,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       runSpacing: 12,
       children: [
         Gauge('ILLUMINATION', illum.toStringAsFixed(1), '%', illum / 100, kGold, Icons.light_mode_rounded),
-        Gauge('ÉLONGATION', elong.toStringAsFixed(1), 'degrés', elong / 180, kCyan, Icons.architecture_rounded),
-        Gauge('HAUTEUR', '${alt.toStringAsFixed(1)}°', altUnit, altFraction, altColor, Icons.height_rounded),
-        Gauge('ÂGE EXACT', age.toStringAsFixed(1), 'jours', age / 29.53, kViolet, Icons.hourglass_bottom_rounded),
-        Gauge('NUAGES', cloud == null ? '—' : cloud.toStringAsFixed(0), '%', (cloud ?? 0) / 100,
+        Gauge(_tr('ÉLONGATION', 'ELONGATION'), elong.toStringAsFixed(1), _tr('degrés', 'degrees'), elong / 180, kCyan,
+            Icons.architecture_rounded),
+        Gauge(_tr('HAUTEUR', 'ALTITUDE'), '${alt.toStringAsFixed(1)}°', altUnit, altFraction, altColor, Icons.height_rounded),
+        Gauge(_tr('ÂGE EXACT', 'EXACT AGE'), age.toStringAsFixed(1), _tr('jours', 'days'), age / 29.53, kViolet,
+            Icons.hourglass_bottom_rounded),
+        Gauge(_tr('NUAGES', 'CLOUDS'), cloud == null ? '—' : cloud.toStringAsFixed(0), '%', (cloud ?? 0) / 100,
             const Color(0xFF8EC5FF), Icons.cloud_rounded),
       ],
     );
@@ -2855,6 +3050,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final m = _monthData;
     final events = ((m?['events'] as List?) ?? []).cast<Map<String, dynamic>>();
     final days = ((m?['days'] as List?) ?? []).cast<Map<String, dynamic>>();
+    final fallbackMonth = (_isEn ? kMonthsEn : kMonthsFr)[_calMonth - 1].toUpperCase();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2882,12 +3078,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 child: Column(
                   children: [
                     Text(
-                      (m?['month_label'] as String?) ?? '${kMonthsFr[_calMonth - 1].toUpperCase()} $_calYear',
+                      (m?['month_label'] as String?) ?? '$fallbackMonth $_calYear',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w900),
                     ),
                     Text(
-                      '${_city.flag} ${_city.name} (${_city.country}) • Présence nocturne & phases',
+                      '${_city.flag} ${_city.name} ($_countryLabel) • ${_tr('Présence nocturne & phases', 'Night presence & phases')}',
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white60, fontSize: 11.5),
                     ),
@@ -2916,7 +3112,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ErrorBlock(_errorMonth!, onRetry: _loadMonth),
         ],
         if (_loadingMonth)
-          const LoadingBlock('Calcul des éphémérides quotidiennes du mois…')
+          LoadingBlock(_tr('Calcul des éphémérides quotidiennes du mois…', 'Calculating daily monthly ephemeris…'))
         else if (m != null) ...[
           const SizedBox(height: 14),
           if (events.isNotEmpty)
@@ -2926,7 +3122,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SectionTitle('INSTANTS EXACTS DES PHASES CE MOIS-CI', icon: Icons.auto_awesome_rounded, color: kCyan),
+                  SectionTitle(
+                    _tr('INSTANTS EXACTS DES PHASES CE MOIS-CI', 'EXACT LUNAR PHASE TIMES THIS MONTH'),
+                    icon: Icons.auto_awesome_rounded,
+                    color: kCyan,
+                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
@@ -2948,9 +3148,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             spacing: 10,
             runSpacing: 6,
             alignment: WrapAlignment.center,
-            children: const [
-              Pill('Point vert : Lune présente la nuit', kGreen, icon: Icons.circle),
-              Pill('Contour doré : Soirée Hilal', kGold, icon: Icons.brightness_2_rounded),
+            children: [
+              Pill(_tr('Point vert : Lune présente la nuit', 'Green dot: Moon present at night'), kGreen,
+                  icon: Icons.circle),
+              Pill(_tr('Contour doré : Soirée Hilal', 'Gold border: Hilal evening'), kGold,
+                  icon: Icons.brightness_2_rounded),
             ],
           ),
           const SizedBox(height: 12),
@@ -2967,7 +3169,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildMonthGrid(List<Map<String, dynamic>> days) {
     if (days.isEmpty) return const SizedBox.shrink();
     final firstWeekday = (days.first['weekday'] as int?) ?? 0;
-    const headers = ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'];
+    final headers = _isEn
+        ? const ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+        : const ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'];
 
     final cells = <Widget>[];
     for (int i = 0; i < firstWeekday; i++) {
@@ -3091,7 +3295,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      dtParsed != null ? frDate(dtParsed, weekday: true) : dateIso,
+                      dtParsed != null ? frDate(dtParsed, weekday: true, lang: _lang) : dateIso,
                       style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 2),
@@ -3109,11 +3313,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             spacing: 8,
             runSpacing: 6,
             children: [
-              Pill(present ? 'Présente cette nuit' : 'Absente cette nuit', present ? kGreen : kRed),
-              Pill('Coucher Soleil : ${d['sunset'] ?? '—'}', kGold),
-              Pill('Lever Lune : ${d['moonrise'] ?? '—'}', kCyan),
-              Pill('Coucher Lune : ${d['moonset'] ?? '—'}', kCyan),
-              Pill('Hauteur : ${d['moon_alt_at_sunset']}°', kViolet),
+              Pill(present ? _tr('Présente cette nuit', 'Present tonight') : _tr('Absente cette nuit', 'Absent tonight'),
+                  present ? kGreen : kRed),
+              Pill('${_tr('Coucher Soleil', 'Sunset')}: ${d['sunset'] ?? '—'}', kGold),
+              Pill('${_tr('Lever Lune', 'Moonrise')}: ${d['moonrise'] ?? '—'}', kCyan),
+              Pill('${_tr('Coucher Lune', 'Moonset')}: ${d['moonset'] ?? '—'}', kCyan),
+              Pill('${_tr('Hauteur', 'Altitude')}: ${d['moon_alt_at_sunset']}°', kViolet),
               if (crescent != null)
                 Pill('Hilal : ${crescent['verdict_text']}', verdictColor(crescent['verdict_code'] as String?)),
             ],
@@ -3136,8 +3341,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               icon: const Icon(Icons.visibility_rounded, size: 16),
-              label: const Text('Observer cette soirée dans l’Observatoire',
-                  style: TextStyle(fontWeight: FontWeight.w900, fontSize: 12)),
+              label: Text(
+                _tr('Observer cette soirée dans l’Observatoire', 'Inspect this evening in Observatory'),
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 12),
+              ),
             ),
           ),
         ],
@@ -3147,11 +3354,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // ─────────────────────────── Grille 2×2 symétrique pour le choix du mois sacré ───────────────────────────
   Widget _buildSacredMonthGrid({required int selectedMonth, required ValueChanged<int> onSelect}) {
-    const items = [
+    final items = [
       (9, Icons.mosque_rounded, 'Ramadan'),
-      (10, Icons.nightlight_round, 'Chawwal (Korité)'),
-      (12, Icons.star_rounded, 'Dhou al-Hijja (Tabaski)'),
-      (0, Icons.travel_explore_rounded, 'Prochain Hilal'),
+      (10, Icons.nightlight_round, _tr('Chawwal (Korité)', 'Shawwal (Eid al-Fitr)')),
+      (12, Icons.star_rounded, _tr('Dhou al-Hijja (Tabaski)', 'Dhu al-Hijjah (Eid al-Adha)')),
+      (0, Icons.travel_explore_rounded, _tr('Prochain Hilal', 'Next Hilal')),
     ];
     Widget pill((int, IconData, String) s) {
       final sel = selectedMonth == s.$1;
@@ -3220,7 +3427,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ErrorBlock(_errorHilal!, onRetry: _loadHilal),
         ],
         if (_loadingHilal)
-          LoadingBlock('Simulation astronomique pour ${_city.country}…')
+          LoadingBlock(_tr(
+            'Simulation astronomique pour $_countryLabel…',
+            'Astronomical simulation for $_countryLabel…',
+          ))
         else if (h != null) ...[
           const SizedBox(height: 16),
           _buildConjunctionBanner(h),
@@ -3237,6 +3447,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final loc = (h['location'] as Map<String, dynamic>?) ?? {};
     final hMonth = h['hijri_month'] ?? '';
     final hYear = h['hijri_year'] ?? '';
+    final era = _isEn ? 'AH' : 'H';
 
     return Glass(
       accent: kGold,
@@ -3244,26 +3455,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('DÉBUT DE ${hMonth.toString().toUpperCase()} $hYear H • ${_city.name.toUpperCase()} (${_city.country.toUpperCase()})',
-              icon: Icons.mosque_rounded, color: kGold),
+          SectionTitle(
+            '${_tr('DÉBUT DE', 'START OF')} ${hMonth.toString().toUpperCase()} $hYear $era • ${_city.name.toUpperCase()} (${_countryLabel.toUpperCase()})',
+            icon: Icons.mosque_rounded,
+            color: kGold,
+          ),
           const SizedBox(height: 10),
           Text(
-            'Conjonction exacte (Nouvelle Lune) : ${h['conjunction_label']}',
+            '${_tr('Conjonction exacte (Nouvelle Lune)', 'Exact Conjunction (New Moon)')} : ${h['conjunction_label']}',
             style: const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
           _startCard(
-            '1er $hMonth (Visibilité à l’œil nu)',
+            _tr('1er $hMonth (Visibilité à l’œil nu)', '1st $hMonth (Naked-Eye Visibility)'),
             (loc['start_naked_eye_label'] as String?) ?? '—',
-            'Critère scientifique à l’œil nu (Odeh Zone A)',
+            _tr('Critère scientifique à l’œil nu (Odeh Zone A)', 'Scientific naked-eye criterion (Odeh Zone A)'),
             kGreen,
             Icons.visibility_rounded,
           ),
           const SizedBox(height: 10),
           _startCard(
-            '1er $hMonth (Avec instruments optiques)',
+            _tr('1er $hMonth (Avec instruments optiques)', '1st $hMonth (With Optical Instruments)'),
             (loc['start_with_instruments_label'] as String?) ?? '—',
-            'Si l’observation aux jumelles / télescope est retenue',
+            _tr('Si l’observation aux jumelles / télescope est retenue', 'If binoculars / telescope sighting is adopted'),
             kCyan,
             Icons.biotech_rounded,
           ),
@@ -3311,8 +3525,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('LES 3 SOIRÉES D’OBSERVATION À ${_city.name.toUpperCase()}',
-              icon: Icons.insights_rounded, color: kCyan),
+          SectionTitle(
+            _tr(
+              'LES 3 SOIRÉES D’OBSERVATION À ${_city.name.toUpperCase()}',
+              'THE 3 SIGHTING EVENINGS IN ${_city.name.toUpperCase()}',
+            ),
+            icon: Icons.insights_rounded,
+            color: kCyan,
+          ),
           const SizedBox(height: 10),
           ...evenings.map((e) {
             final col = verdictColor(e['verdict_code'] as String?);
@@ -3337,7 +3557,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     runSpacing: 6,
                     children: [
                       Text(
-                        'Soir du ${e['date_label']}',
+                        '${_tr('Soir du', 'Evening of')} ${e['date_label']}',
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
                       ),
                       Pill((e['verdict_text'] as String?) ?? '', col),
@@ -3348,10 +3568,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     spacing: 10,
                     runSpacing: 5,
                     children: [
-                      Text('🌅 Soleil : ${e['sunset'] ?? '—'}', style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
-                      Text('🌙 Lune : ${e['moonset'] ?? '—'}', style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
-                      Text('⏱️ Lag : ${e['lag_minutes'] ?? '—'} min', style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
-                      Text('🕰️ Âge : ${e['age_hours']} h', style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
+                      Text('🌅 ${_tr('Soleil', 'Sun')} : ${e['sunset'] ?? '—'}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
+                      Text('🌙 ${_tr('Lune', 'Moon')} : ${e['moonset'] ?? '—'}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
+                      Text('⏱️ Lag : ${e['lag_minutes'] ?? '—'} min',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
+                      Text('🕰️ ${_tr('Âge', 'Age')} : ${e['age_hours']} h',
+                          style: const TextStyle(color: Colors.white70, fontSize: 11.5)),
                       if (possible && odeh != null)
                         Text('📐 Odeh : ${odeh['code']} (V=${odeh['v']})',
                             style: TextStyle(color: col, fontSize: 11.5, fontWeight: FontWeight.bold)),
@@ -3379,8 +3603,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('SYNTHÈSE NATIONALE • VILLES DE ${_city.country.toUpperCase()} (${_city.flag})',
-              icon: Icons.location_city_rounded, color: kViolet),
+          SectionTitle(
+            '${_tr('SYNTHÈSE NATIONALE • VILLES DE', 'NATIONAL SUMMARY • CITIES OF')} ${_countryLabel.toUpperCase()} (${_city.flag})',
+            icon: Icons.location_city_rounded,
+            color: kViolet,
+          ),
           const SizedBox(height: 10),
           ...cities.map((c) {
             final evs = ((c['evenings'] as List?) ?? []).cast<Map<String, dynamic>>();
@@ -3406,7 +3633,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         '${c['flag']}  ${c['name']}$regLabel',
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                       ),
-                      Pill('1er jour : ${c['start_naked_eye_label']}', kGreen),
+                      Pill('${_tr('1er jour', '1st day')} : ${c['start_naked_eye_label']}', kGreen),
                     ],
                   ),
                   const SizedBox(height: 6),
@@ -3444,7 +3671,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SectionTitle(
-                'OBSERVATOIRE DES RÉGIONS • ${_city.country.toUpperCase()} (${_city.flag})',
+                '${_tr('OBSERVATOIRE DES RÉGIONS', 'REGIONAL OBSERVATORY')} • ${_countryLabel.toUpperCase()} (${_city.flag})',
                 icon: Icons.map_rounded,
                 color: kCyan,
               ),
@@ -3458,7 +3685,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
               if (eveningsList.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text('Soirée après la conjonction :', style: TextStyle(color: Colors.white60, fontSize: 11)),
+                Text(
+                  _tr('Soirée après la conjonction :', 'Evening after conjunction:'),
+                  style: const TextStyle(color: Colors.white60, fontSize: 11),
+                ),
                 const SizedBox(height: 6),
                 Row(
                   children: List.generate(eveningsList.length, (i) {
@@ -3487,7 +3717,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               border: Border.all(color: sel ? kGold : Colors.white24),
                             ),
                             child: Text(
-                              'Soir ${idx + 1} ($dateShort)',
+                              '${_tr('Soir', 'Night')} ${idx + 1} ($dateShort)',
                               style: TextStyle(
                                 color: sel ? kInk : Colors.white,
                                 fontWeight: FontWeight.w900,
@@ -3511,7 +3741,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ],
 
         if (_loadingRegions)
-          LoadingBlock('Scan astronomique des régions de ${_city.country}…')
+          LoadingBlock(_tr(
+            'Scan astronomique des régions de $_countryLabel…',
+            'Astronomical scan of $_countryLabel regions…',
+          ))
         else if (r != null) ...[
           const SizedBox(height: 16),
           _buildSentinelRuleCard(r),
@@ -3533,8 +3766,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionTitle('RÈGLE D’OR ASTRONOMIQUE & POINT SENTINELLE (${_city.country.toUpperCase()})',
-              icon: Icons.emoji_events_rounded, color: col),
+          SectionTitle(
+            '${_tr('RÈGLE D’OR ASTRONOMIQUE & POINT SENTINELLE', 'ASTRONOMICAL GOLDEN RULE & SENTINEL POINT')} (${_countryLabel.toUpperCase()})',
+            icon: Icons.emoji_events_rounded,
+            color: col,
+          ),
           const SizedBox(height: 8),
           Text(
             (r['rule_title'] as String?) ?? '',
@@ -3542,7 +3778,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 6),
           Text(
-            'Mois visé : ${r['hijri_target']}  •  Conjonction : ${r['conjunction_label']}',
+            '${_tr('Mois visé', 'Target month')} : ${r['hijri_target']}  •  ${_tr('Conjonction', 'Conjunction')} : ${r['conjunction_label']}',
             style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 10),
@@ -3562,7 +3798,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Point Sentinelle #1 (Lieu le plus favorable) : ${sen['name']} — Région de ${sen['region']}',
+                        _isEn
+                            ? 'Sentinel Point #1 (Most Favorable Location): ${sen['name']} — ${sen['region']} Region'
+                            : 'Point Sentinelle #1 (Lieu le plus favorable) : ${sen['name']} — Région de ${sen['region']}',
                         style: const TextStyle(color: kGold, fontWeight: FontWeight.w900, fontSize: 13),
                       ),
                     ),
@@ -3570,8 +3808,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '🌅 Soleil : ${sen['sunset']}  •  🌙 Lune : ${sen['moonset']} (Lag : ${sen['lag_minutes']} min)  •  '
-                  'Indice Odeh V = ${sen['odeh_v'] ?? '—'} (Zone ${sen['odeh_code']})  •  Yallop = ${sen['yallop_code']}',
+                  '🌅 ${_tr('Soleil', 'Sun')} : ${sen['sunset']}  •  🌙 ${_tr('Lune', 'Moon')} : ${sen['moonset']} (Lag : ${sen['lag_minutes']} min)  •  '
+                  'Odeh V = ${sen['odeh_v'] ?? '—'} (Zone ${sen['odeh_code']})  •  Yallop = ${sen['yallop_code']}',
                   style: const TextStyle(color: Colors.white70, fontSize: 11.5),
                 ),
               ],
@@ -3587,9 +3825,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             spacing: 8,
             runSpacing: 8,
             children: [
-              Pill('Œil nu : ${counts['naked_eye']}/${counts['total']}', kGreen, icon: Icons.visibility_rounded),
-              Pill('Jumelles / Œil nu possible : ${counts['naked_eye_possible']}', kGold),
-              Pill('Instruments seuls : ${counts['optical_only']}', kOrange),
+              Pill('${_tr('Œil nu', 'Naked eye')} : ${counts['naked_eye']}/${counts['total']}', kGreen,
+                  icon: Icons.visibility_rounded),
+              Pill('${_tr('Jumelles / Œil nu possible', 'Binoculars / Naked eye possible')} : ${counts['naked_eye_possible']}',
+                  kGold),
+              Pill('${_tr('Instruments seuls', 'Instruments only')} : ${counts['optical_only']}', kOrange),
               Pill('Impossible : ${counts['not_visible']}', kRed, icon: Icons.visibility_off_rounded),
             ],
           ),
@@ -3601,13 +3841,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildRegionsBreakdown(Map<String, dynamic> r) {
     final regs = ((r['regions'] as List?) ?? []).cast<Map<String, dynamic>>();
     final flag = (r['flag'] as String?) ?? _city.flag;
-    final cname = ((r['country_name'] as String?) ?? _city.country).split(' (').first;
+    final cname = _countryLabel;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SectionTitle('RÉGIONS & LOCALITÉS DE VOTRE PAYS ($flag $cname)',
-            icon: Icons.location_city_rounded, color: kGold),
+        SectionTitle(
+          '${_tr('RÉGIONS & LOCALITÉS DE VOTRE PAYS', 'REGIONS & LOCALITIES IN YOUR COUNTRY')} ($flag $cname)',
+          icon: Icons.location_city_rounded,
+          color: kGold,
+        ),
         const SizedBox(height: 10),
         ...regs.map((reg) {
           final col = verdictColor(reg['verdict_code'] as String?);
@@ -3627,7 +3870,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     runSpacing: 6,
                     children: [
                       Text(
-                        '$flag  Région de ${reg['region']}',
+                        _isEn ? '$flag  ${reg['region']} Region' : '$flag  Région de ${reg['region']}',
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 14.5),
                       ),
                       Pill((reg['verdict_text'] as String?) ?? '', col),
@@ -3717,15 +3960,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Text('✦  ✦  ✦', style: TextStyle(color: kGold.withOpacity(0.6), letterSpacing: 6)),
         const SizedBox(height: 6),
         Text(
-          'WeerWi • Observatoire astronomique national (${_city.country})',
+          'WeerWi • ${_tr('Observatoire astronomique national', 'National Astronomical Observatory')} ($_countryLabel)',
           textAlign: TextAlign.center,
           style: const TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 3),
-        const Text(
-          'Éphémérides NASA JPL DE421 · Critères de Yallop (1997) & Odeh (2004) · Météo Open-Meteo',
+        Text(
+          _tr(
+            'Éphémérides NASA JPL DE421 · Critères de Yallop (1997) & Odeh (2004) · Météo Open-Meteo',
+            'NASA JPL DE421 Ephemeris · Yallop (1997) & Odeh (2004) Criteria · Open-Meteo Weather',
+          ),
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white38, fontSize: 10),
+          style: const TextStyle(color: Colors.white38, fontSize: 10),
         ),
       ],
     );

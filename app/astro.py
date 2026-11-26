@@ -32,15 +32,103 @@ MOON_RADIUS_KM = 1737.4
 EARTH_RADIUS_KM = 6378.137
 
 PHASE_EVENT_NAMES = ["Nouvelle lune", "Premier quartier", "Pleine lune", "Dernier quartier"]
+PHASE_EVENT_NAMES_EN = ["New Moon", "First Quarter", "Full Moon", "Last Quarter"]
 HIJRI_MONTHS = [
     "Mouharram", "Safar", "Rabi al-Awwal", "Rabi ath-Thani", "Joumada al-Oula", "Joumada ath-Thania",
     "Rajab", "Chaabane", "Ramadan", "Chawwal", "Dhou al-Qi'da", "Dhou al-Hijja",
+]
+HIJRI_MONTHS_EN = [
+    "Muharram", "Safar", "Rabi' al-Awwal", "Rabi' al-Thani", "Jumada al-Ula", "Jumada al-Akhirah",
+    "Rajab", "Sha'ban", "Ramadan", "Shawwal", "Dhu al-Qi'dah", "Dhu al-Hijjah",
 ]
 MONTHS_FR = [
     "janvier", "février", "mars", "avril", "mai", "juin",
     "juillet", "août", "septembre", "octobre", "novembre", "décembre",
 ]
+MONTHS_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+]
 DAYS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+ANGLOPHONE_COUNTRIES = {"GM", "GH", "NG", "SL", "LR"}
+
+COUNTRY_NAMES_EN = {
+    "SN": "Senegal",
+    "ML": "Mali",
+    "GM": "Gambia",
+    "MR": "Mauritania",
+    "GN": "Guinea",
+    "CI": "Ivory Coast",
+    "BF": "Burkina Faso",
+    "NE": "Niger",
+    "TG": "Togo",
+    "BJ": "Benin",
+    "GW": "Guinea-Bissau",
+    "CV": "Cape Verde",
+    "GH": "Ghana",
+    "NG": "Nigeria",
+    "SL": "Sierra Leone",
+    "LR": "Liberia",
+    "WORLD": "World & Holy Sites",
+}
+
+LOCALITY_TYPE_EN = {
+    "Capitale": "Capital",
+    "Capitale côtière": "Coastal Capital",
+    "Capitale (Ouest)": "Capital (West)",
+    "Métropole": "Metropolis",
+    "Chef-lieu": "Regional Capital",
+    "Chef-lieu côtier": "Coastal Regional Capital",
+    "Chef-lieu Sud": "Southern Regional Capital",
+    "Chef-lieu & Cité religieuse": "Regional Capital & Religious City",
+    "Cité religieuse": "Religious City",
+    "Cité religieuse & Département": "Religious City & Department",
+    "Foyer religieux": "Religious Center",
+    "Cité historique": "Historic City",
+    "Département": "Department",
+    "Département côtier": "Coastal Department",
+    "Commune": "Municipality",
+    "Commune côtière": "Coastal Municipality",
+    "Cercle": "District",
+    "Cap le plus à l'Ouest": "Westernmost Cape",
+    "Pointe Sud-Ouest côtière": "South-West Coastal Tip",
+    "Sud-Ouest côtier": "South-West Coast",
+    "Nord-Ouest côtier": "North-West Coast",
+    "Nord-Ouest": "North-West",
+    "Sud-Ouest": "South-West",
+    "Nord": "North",
+    "Sud": "South",
+    "Est": "East",
+    "Centre": "Central",
+    "Sud-Centre": "South-Central",
+    "Nord-Est": "North-East",
+    "Extrême-Est": "Far East",
+}
+
+
+def resolve_lang(lang: str | None = None, country_code: str | None = None) -> str:
+    if lang and lang.lower().startswith("en"):
+        return "en"
+    if lang and lang.lower().startswith("fr"):
+        return "fr"
+    if country_code and country_code.upper() in ANGLOPHONE_COUNTRIES:
+        return "en"
+    return "fr"
+
+
+def country_display_name(country_code: str, default_name: str, lang: str = "fr") -> str:
+    base = default_name.split(" (")[0]
+    if lang == "en":
+        return COUNTRY_NAMES_EN.get((country_code or "").upper(), base)
+    return base
+
+
+def translate_locality_type(t: str, lang: str = "fr") -> str:
+    if lang != "en":
+        return t
+    return LOCALITY_TYPE_EN.get(t, t)
 
 # Villes de référence (Afrique de l'Ouest) avec leur fuseau horaire (heures / UTC)
 CITIES = [
@@ -84,7 +172,10 @@ def iso_local(t, off):
     return t_to_local(t, off).strftime("%Y-%m-%dT%H:%M") if t is not None else None
 
 
-def fr_date(d: dt.date, with_day=True) -> str:
+def fr_date(d: dt.date, with_day=True, lang: str = "fr") -> str:
+    if lang == "en":
+        s = f"{d.day} {MONTHS_EN[d.month - 1]} {d.year}"
+        return f"{DAYS_EN[d.weekday()]}, {s}" if with_day else s
     s = f"{d.day} {MONTHS_FR[d.month - 1]} {d.year}"
     return f"{DAYS_FR[d.weekday()]} {s}" if with_day else s
 
@@ -114,10 +205,11 @@ def hijri_from_date(d: dt.date):
     return int(y), int(m), int(day)
 
 
-def month_starting_after(conj_local_date: dt.date):
+def month_starting_after(conj_local_date: dt.date, lang: str = "fr"):
     """Mois hégirien qui commence juste après une conjonction (3 jours après = au cœur du nouveau mois)."""
     y, m, _ = hijri_from_date(conj_local_date + dt.timedelta(days=3))
-    return y, m, HIJRI_MONTHS[m - 1]
+    months = HIJRI_MONTHS_EN if lang == "en" else HIJRI_MONTHS
+    return y, m, months[m - 1]
 
 # ─────────────────────────── Phases ───────────────────────────
 
@@ -127,7 +219,23 @@ def phase_info(t):
     return ang, illum, ang < 180.0
 
 
-def phase_name(ang: float) -> str:
+def phase_name(ang: float, lang: str = "fr") -> str:
+    if lang == "en":
+        if ang < 6 or ang >= 354:
+            return "New Moon"
+        if ang < 84:
+            return "Waxing Crescent"
+        if ang < 96:
+            return "First Quarter"
+        if ang < 174:
+            return "Waxing Gibbous"
+        if ang < 186:
+            return "Full Moon"
+        if ang < 264:
+            return "Waning Gibbous"
+        if ang < 276:
+            return "Last Quarter"
+        return "Waning Crescent"
     if ang < 6 or ang >= 354:
         return "Nouvelle lune"
     if ang < 84:
@@ -179,8 +287,22 @@ def geometry(obs, t):
     }
 
 
-def yallop(width, arcv):
+def yallop(width, arcv, lang: str = "fr"):
     q = (arcv - (11.8371 - 6.3226 * width + 0.7319 * width ** 2 - 0.1018 * width ** 3)) / 10.0
+    if lang == "en":
+        if q > 0.216:
+            c, txt = "A", "Easily visible to the naked eye"
+        elif q > -0.014:
+            c, txt = "B", "Visible to the naked eye under perfect conditions"
+        elif q > -0.160:
+            c, txt = "C", "Optical aid helpful to locate, then visible to the naked eye"
+        elif q > -0.232:
+            c, txt = "D", "Visible only with binoculars or telescope"
+        elif q > -0.293:
+            c, txt = "E", "Not visible, even with a telescope"
+        else:
+            c, txt = "F", "Not visible (below the Danjon limit)"
+        return {"q": round(q, 3), "code": c, "text": txt}
     if q > 0.216:
         c, txt = "A", "Facilement visible à l'œil nu"
     elif q > -0.014:
@@ -196,8 +318,18 @@ def yallop(width, arcv):
     return {"q": round(q, 3), "code": c, "text": txt}
 
 
-def odeh(width, arcv):
+def odeh(width, arcv, lang: str = "fr"):
     v = arcv - (7.1651 - 6.3226 * width + 0.7319 * width ** 2 - 0.1018 * width ** 3)
+    if lang == "en":
+        if v >= 5.65:
+            c, txt = "A", "Visible to the naked eye"
+        elif v >= 2.0:
+            c, txt = "B", "Visible with binoculars, possible to the naked eye"
+        elif v >= -0.96:
+            c, txt = "C", "Visible only with binoculars or telescope"
+        else:
+            c, txt = "D", "Not visible, even with optical instruments"
+        return {"v": round(v, 2), "code": c, "text": txt}
     if v >= 5.65:
         c, txt = "A", "Visible à l'œil nu"
     elif v >= 2.0:
@@ -215,27 +347,38 @@ VERDICTS = {
     "optical_only": ("Visible uniquement aux instruments", "optical"),
     "not_visible": ("Non visible", "bad"),
 }
+VERDICTS_EN = {
+    "naked_eye": ("Visible to the naked eye", "good"),
+    "naked_eye_possible": ("Binoculars advised, naked eye possible", "maybe"),
+    "optical_only": ("Visible with instruments only", "optical"),
+    "not_visible": ("Not visible", "bad"),
+}
 _ODEH_TO_VERDICT = {"A": "naked_eye", "B": "naked_eye_possible", "C": "optical_only", "D": "not_visible"}
 
 
-def crescent_eval(obs, sunset, moonset, age_h):
+def crescent_eval(obs, sunset, moonset, age_h, lang: str = "fr"):
     """Évalue la visibilité du croissant au meilleur moment après le coucher du Soleil."""
     lag = (moonset.tt - sunset.tt) * 1440.0 if moonset is not None else None
     base = {"lag_minutes": round(lag) if lag is not None else None, "age_hours": round(age_h, 1)}
     if age_h <= 0:
+        msg = ("Conjunction after sunset: no crescent possible"
+               if lang == "en" else "Conjonction après le coucher du Soleil : aucun croissant possible")
         return {**base, "possible": False, "verdict_code": "not_visible",
-                "verdict_text": "Conjonction après le coucher du Soleil : aucun croissant possible",
+                "verdict_text": msg,
                 "level": "bad"}
     if lag is None or lag <= 0:
+        msg = ("Moon sets before the Sun: crescent impossible to see"
+               if lang == "en" else "La Lune se couche avant le Soleil : croissant impossible à voir")
         return {**base, "possible": False, "verdict_code": "not_visible",
-                "verdict_text": "La Lune se couche avant le Soleil : croissant impossible à voir",
+                "verdict_text": msg,
                 "level": "bad"}
     tb = shift(sunset, lag * 4.0 / 9.0 / 1440.0)
     g = geometry(obs, tb)
-    y = yallop(g["width"], g["arcv_geo"])
-    o = odeh(g["width"], g["arcv_topo"])
+    y = yallop(g["width"], g["arcv_geo"], lang=lang)
+    o = odeh(g["width"], g["arcv_topo"], lang=lang)
     code = _ODEH_TO_VERDICT[o["code"]]
-    text, level = VERDICTS[code]
+    vmap = VERDICTS_EN if lang == "en" else VERDICTS
+    text, level = vmap[code]
     return {
         **base, "possible": True, "best_time_t": tb,
         "arcl": round(g["arcl"], 2), "arcv": round(g["arcv_topo"], 2), "daz": round(g["daz"], 2),
@@ -263,7 +406,9 @@ def _nearest(times, ref):
     return min(times, key=lambda t: abs(t.tt - ref.tt)) if times else None
 
 
-def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
+def evening_report(lat: float, lon: float, d: dt.date, off: float, lang: str = "fr") -> dict:
+    lang = resolve_lang(lang)
+    is_en = lang == "en"
     obs = observer(lat, lon)
     sunset = _sunset_on(obs, d, off)
     moonset = _nearest(_events(almanac.find_settings, obs, MOON, shift(sunset, -0.5), shift(sunset, 0.6)), sunset)
@@ -280,69 +425,119 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
 
     # Présence de la Lune durant la nuit
     above = g["moon_alt"] > 0
-    if above and not night_sets:
-        presence = "Présente toute la nuit, du coucher du Soleil jusqu'à l'aube."
-    elif above:
-        presence = f"Visible dès le coucher du Soleil jusqu'à {hm(night_sets[0], off)}."
-    elif night_rises:
-        presence = f"Se lève à {hm(night_rises[0], off)}"
-        later_sets = [s for s in night_sets if s.tt > night_rises[0].tt]
-        presence += f" et se couche à {hm(later_sets[0], off)}." if later_sets else " et reste visible jusqu'à l'aube."
+    if is_en:
+        if above and not night_sets:
+            presence = "Present all night, from sunset until dawn."
+        elif above:
+            presence = f"Visible from sunset until {hm(night_sets[0], off)}."
+        elif night_rises:
+            presence = f"Rises at {hm(night_rises[0], off)}"
+            later_sets = [s for s in night_sets if s.tt > night_rises[0].tt]
+            presence += f" and sets at {hm(later_sets[0], off)}." if later_sets else " and remains visible until dawn."
+        else:
+            presence = "Absent from the sky tonight (below the horizon between sunset and sunrise)."
     else:
-        presence = "Absente du ciel cette nuit (sous l'horizon entre le coucher et le lever du Soleil)."
+        if above and not night_sets:
+            presence = "Présente toute la nuit, du coucher du Soleil jusqu'à l'aube."
+        elif above:
+            presence = f"Visible dès le coucher du Soleil jusqu'à {hm(night_sets[0], off)}."
+        elif night_rises:
+            presence = f"Se lève à {hm(night_rises[0], off)}"
+            later_sets = [s for s in night_sets if s.tt > night_rises[0].tt]
+            presence += f" et se couche à {hm(later_sets[0], off)}." if later_sets else " et reste visible jusqu'à l'aube."
+        else:
+            presence = "Absente du ciel cette nuit (sous l'horizon entre le coucher et le lever du Soleil)."
     present_tonight = above or bool(night_rises)
 
     crescent = None
     if 0 < age_h <= 72:
         context = "crescent"
-        crescent = crescent_eval(obs, sunset, moonset, age_h)
-        hy, hmo, hname = month_starting_after(t_to_local(prev_nm, off).date())
+        crescent = crescent_eval(obs, sunset, moonset, age_h, lang=lang)
+        hy, hmo, hname = month_starting_after(t_to_local(prev_nm, off).date(), lang=lang)
     elif to_next_h <= 48:
         context = "pre_conjunction"
-        hy, hmo, hname = month_starting_after(t_to_local(next_nm, off).date())
+        hy, hmo, hname = month_starting_after(t_to_local(next_nm, off).date(), lang=lang)
     else:
         context = "general"
-        hy, hmo, hname = month_starting_after(t_to_local(prev_nm, off).date())
+        hy, hmo, hname = month_starting_after(t_to_local(prev_nm, off).date(), lang=lang)
 
     tomorrow = d + dt.timedelta(days=1)
     if context == "crescent":
         code = crescent["verdict_code"]
-        badge = {
-            "naked_eye": ("CROISSANT VISIBLE À L'ŒIL NU", "good"),
-            "naked_eye_possible": ("CROISSANT : ŒIL NU POSSIBLE, JUMELLES CONSEILLÉES", "maybe"),
-            "optical_only": ("CROISSANT VISIBLE AUX INSTRUMENTS SEULEMENT", "optical"),
-            "not_visible": ("CROISSANT NON VISIBLE CE SOIR", "bad"),
-        }[code]
+        if is_en:
+            badge = {
+                "naked_eye": ("CRESCENT VISIBLE TO THE NAKED EYE", "good"),
+                "naked_eye_possible": ("CRESCENT: NAKED EYE POSSIBLE, BINOCULARS ADVISED", "maybe"),
+                "optical_only": ("CRESCENT VISIBLE WITH INSTRUMENTS ONLY", "optical"),
+                "not_visible": ("CRESCENT NOT VISIBLE TONIGHT", "bad"),
+            }[code]
+        else:
+            badge = {
+                "naked_eye": ("CROISSANT VISIBLE À L'ŒIL NU", "good"),
+                "naked_eye_possible": ("CROISSANT : ŒIL NU POSSIBLE, JUMELLES CONSEILLÉES", "maybe"),
+                "optical_only": ("CROISSANT VISIBLE AUX INSTRUMENTS SEULEMENT", "optical"),
+                "not_visible": ("CROISSANT NON VISIBLE CE SOIR", "bad"),
+            }[code]
         visible = code == "naked_eye"
         if crescent["possible"]:
-            tip = (f"Regardez vers l'ouest (azimut ≈ {g['moon_az']:.0f}°) entre {hm(sunset, off)} et "
-                   f"{hm(moonset, off)}. Meilleur moment : {_clean_crescent(crescent, off)['best_time']}. "
-                   f"Odeh : {crescent['odeh']['text'].lower()}. Yallop ({crescent['yallop']['code']}) : "
-                   f"{crescent['yallop']['text'].lower()}.")
+            if is_en:
+                tip = (f"Look west (azimuth ≈ {g['moon_az']:.0f}°) between {hm(sunset, off)} and "
+                       f"{hm(moonset, off)}. Best sighting time: {_clean_crescent(crescent, off)['best_time']}. "
+                       f"Odeh: {crescent['odeh']['text'].lower()}. Yallop ({crescent['yallop']['code']}): "
+                       f"{crescent['yallop']['text'].lower()}.")
+            else:
+                tip = (f"Regardez vers l'ouest (azimut ≈ {g['moon_az']:.0f}°) entre {hm(sunset, off)} et "
+                       f"{hm(moonset, off)}. Meilleur moment : {_clean_crescent(crescent, off)['best_time']}. "
+                       f"Odeh : {crescent['odeh']['text'].lower()}. Yallop ({crescent['yallop']['code']}) : "
+                       f"{crescent['yallop']['text'].lower()}.")
         else:
             tip = crescent["verdict_text"] + "."
         if code in ("naked_eye", "naked_eye_possible"):
-            status = (f"Soirée d'observation du croissant de {hname} {hy} H. S'il est aperçu ce soir, "
-                      f"le 1er {hname} sera le {fr_date(tomorrow)}.")
+            if is_en:
+                status = (f"Crescent sighting evening for {hname} {hy} AH. If sighted tonight, "
+                          f"1 {hname} will be on {fr_date(tomorrow, lang=lang)}.")
+            else:
+                status = (f"Soirée d'observation du croissant de {hname} {hy} H. S'il est aperçu ce soir, "
+                          f"le 1er {hname} sera le {fr_date(tomorrow, lang=lang)}.")
         else:
-            status = (f"Soirée d'observation du croissant de {hname} {hy} H. Croissant non visible à l'œil nu : "
-                      f"le mois en cours devrait compléter 30 jours (ou débuter après une observation le lendemain).")
+            if is_en:
+                status = (f"Crescent sighting evening for {hname} {hy} AH. Crescent not visible to the naked eye: "
+                          f"the current month should complete 30 days (or begin after sighting the next evening).")
+            else:
+                status = (f"Soirée d'observation du croissant de {hname} {hy} H. Croissant non visible à l'œil nu : "
+                          f"le mois en cours devrait compléter 30 jours (ou débuter après une observation le lendemain).")
     elif context == "pre_conjunction":
-        badge = ("PAS DE CROISSANT : NOUVELLE LUNE À VENIR", "bad")
+        badge = ("NO CRESCENT: NEW MOON UPCOMING", "bad") if is_en else ("PAS DE CROISSANT : NOUVELLE LUNE À VENIR", "bad")
         visible = False
         nm_local = t_to_local(next_nm, off)
-        tip = (f"La conjonction (nouvelle lune astronomique) aura lieu le {fr_date(nm_local.date())} à "
-               f"{nm_local.strftime('%H:%M')}. Aucun nouveau croissant n'est possible avant cet instant.")
-        status = (f"Fin du mois lunaire. Le croissant de {hname} {hy} H pourra être recherché à partir du soir "
-                  f"du {fr_date(nm_local.date() if nm_local.hour < 12 else nm_local.date() + dt.timedelta(days=1))}.")
+        first_search = nm_local.date() if nm_local.hour < 12 else nm_local.date() + dt.timedelta(days=1)
+        if is_en:
+            tip = (f"Astronomical conjunction (New Moon) will occur on {fr_date(nm_local.date(), lang=lang)} at "
+                   f"{nm_local.strftime('%H:%M')}. No new crescent is possible before that time.")
+            status = (f"End of the lunar month. The crescent of {hname} {hy} AH can be searched starting on the evening "
+                      f"of {fr_date(first_search, lang=lang)}.")
+        else:
+            tip = (f"La conjonction (nouvelle lune astronomique) aura lieu le {fr_date(nm_local.date(), lang=lang)} à "
+                   f"{nm_local.strftime('%H:%M')}. Aucun nouveau croissant n'est possible avant cet instant.")
+            status = (f"Fin du mois lunaire. Le croissant de {hname} {hy} H pourra être recherché à partir du soir "
+                      f"du {fr_date(first_search, lang=lang)}.")
     else:
-        badge = ("LUNE PRÉSENTE DANS LE CIEL CETTE NUIT", "good") if present_tonight else (
-            "LUNE ABSENTE DU CIEL CE SOIR", "bad")
-        visible = present_tonight
-        tip = presence
-        nm_local = t_to_local(next_nm, off)
-        status = (f"Mois lunaire en cours ({hname} {hy} H, estimation) — {age_h / 24:.1f} jours après la "
-                  f"nouvelle lune. Prochaine nouvelle lune : {fr_date(nm_local.date())} à {nm_local.strftime('%H:%M')}.")
+        if is_en:
+            badge = ("MOON PRESENT IN THE SKY TONIGHT", "good") if present_tonight else (
+                "MOON ABSENT FROM THE SKY TONIGHT", "bad")
+            visible = present_tonight
+            tip = presence
+            nm_local = t_to_local(next_nm, off)
+            status = (f"Ongoing lunar month ({hname} {hy} AH, estimate) — {age_h / 24:.1f} days after "
+                      f"New Moon. Next New Moon: {fr_date(nm_local.date(), lang=lang)} at {nm_local.strftime('%H:%M')}.")
+        else:
+            badge = ("LUNE PRÉSENTE DANS LE CIEL CETTE NUIT", "good") if present_tonight else (
+                "LUNE ABSENTE DU CIEL CE SOIR", "bad")
+            visible = present_tonight
+            tip = presence
+            nm_local = t_to_local(next_nm, off)
+            status = (f"Mois lunaire en cours ({hname} {hy} H, estimation) — {age_h / 24:.1f} jours après la "
+                      f"nouvelle lune. Prochaine nouvelle lune : {fr_date(nm_local.date(), lang=lang)} à {nm_local.strftime('%H:%M')}.")
 
     if crescent and crescent.get("possible"):
         score = max(0.0, min(1.0, (crescent["odeh"]["v"] + 0.96) / 8.0))
@@ -350,31 +545,51 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
         score = 1.0 if visible else 0.0
 
     # Direction cardinale & turbulence atmosphérique (masse d'air près de l'horizon)
-    dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
+    dirs_fr = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
+    dirs_en = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+    dirs = dirs_en if is_en else dirs_fr
     cardinal = dirs[int(((g["moon_az"] + 11.25) % 360) / 22.5)]
     alt_deg = g["moon_alt"]
     if alt_deg <= 0:
         airmass = None
-        turb_level = "Sous l'horizon"
-        turb_note = "La Lune est sous l'horizon au coucher du Soleil : aucune lumière directe n'atteint l'observateur."
+        if is_en:
+            turb_level = "Below the horizon"
+            turb_note = "The Moon is below the horizon at sunset: no direct light reaches the observer."
+        else:
+            turb_level = "Sous l'horizon"
+            turb_note = "La Lune est sous l'horizon au coucher du Soleil : aucune lumière directe n'atteint l'observateur."
     else:
         # Formule de Kasten & Young (1989) pour la masse d'air atmosphérique
         airmass = round(1.0 / (math.sin(math.radians(alt_deg)) + 0.50572 * ((alt_deg + 6.07995) ** -1.6364)), 2)
         if alt_deg < 6:
-            turb_level = "Forte turbulence d'horizon"
-            turb_note = (f"Masse d'air élevée ({airmass}×) à {alt_deg:.1f}° de hauteur : forte absorption, brume, "
-                         f"poussière (Harmattan) et scintillation près de l'horizon. Un horizon ouest parfaitement dégagé est indispensable.")
+            if is_en:
+                turb_level = "High horizon turbulence"
+                turb_note = (f"High airmass ({airmass}×) at {alt_deg:.1f}° altitude: strong atmospheric extinction, haze, "
+                             f"dust (Harmattan), and scintillation near the horizon. A completely unobstructed western horizon is required.")
+            else:
+                turb_level = "Forte turbulence d'horizon"
+                turb_note = (f"Masse d'air élevée ({airmass}×) à {alt_deg:.1f}° de hauteur : forte absorption, brume, "
+                             f"poussière (Harmattan) et scintillation près de l'horizon. Un horizon ouest parfaitement dégagé est indispensable.")
         elif alt_deg < 15:
-            turb_level = "Turbulence modérée"
-            turb_note = (f"Masse d'air modérée ({airmass}×) à {alt_deg:.1f}° de hauteur : transparence atmosphérique "
-                         f"correcte si l'horizon ouest est sans poussière ni brume.")
+            if is_en:
+                turb_level = "Moderate turbulence"
+                turb_note = (f"Moderate airmass ({airmass}×) at {alt_deg:.1f}° altitude: good atmospheric transparency "
+                             f"if the western horizon is free of dust and haze.")
+            else:
+                turb_level = "Turbulence modérée"
+                turb_note = (f"Masse d'air modérée ({airmass}×) à {alt_deg:.1f}° de hauteur : transparence atmosphérique "
+                             f"correcte si l'horizon ouest est sans poussière ni brume.")
         else:
-            turb_level = "Atmosphère stable (faible extinction)"
-            turb_note = f"Masse d'air faible ({airmass}×) à {alt_deg:.1f}° de hauteur : très peu de turbulence atmosphérique."
+            if is_en:
+                turb_level = "Stable atmosphere (low extinction)"
+                turb_note = f"Low airmass ({airmass}×) at {alt_deg:.1f}° altitude: minimal atmospheric turbulence."
+            else:
+                turb_level = "Atmosphère stable (faible extinction)"
+                turb_note = f"Masse d'air faible ({airmass}×) à {alt_deg:.1f}° de hauteur : très peu de turbulence atmosphérique."
 
     return {
         "date": d.isoformat(),
-        "date_label": fr_date(d),
+        "date_label": fr_date(d, lang=lang),
         "utc_offset": off,
         "context": context,
         "sunset": hm(sunset, off),
@@ -382,7 +597,7 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
         "moonset": hm(moonset, off),
         "moonrise_tonight": hm(night_rises[0], off) if night_rises else None,
         "lag_minutes": round((moonset.tt - sunset.tt) * 1440) if moonset is not None else None,
-        "phase": phase_name(ang),
+        "phase": phase_name(ang, lang=lang),
         "phase_angle": round(ang, 2),
         "waxing": waxing,
         "illumination": round(illum, 2),
@@ -411,11 +626,14 @@ def evening_report(lat: float, lon: float, d: dt.date, off: float) -> dict:
         "hijri_month": hname,
         "hijri_year": hy,
         "sunset_utc": sunset.utc_datetime().strftime("%Y-%m-%dT%H:%M"),
+        "lang": lang,
     }
 
 # ─────────────────────────── Calendrier mensuel ───────────────────────────
 
-def month_calendar(lat: float, lon: float, off: float, year: int, month: int) -> dict:
+def month_calendar(lat: float, lon: float, off: float, year: int, month: int, lang: str = "fr") -> dict:
+    lang = resolve_lang(lang)
+    is_en = lang == "en"
     obs = observer(lat, lon)
     first = dt.date(year, month, 1)
     nd = calendar.monthrange(year, month)[1]
@@ -431,13 +649,16 @@ def month_calendar(lat: float, lon: float, off: float, year: int, month: int) ->
     def local_date(t):
         return t_to_local(t, off).date()
 
+    ev_names = PHASE_EVENT_NAMES_EN if is_en else PHASE_EVENT_NAMES
+    at_word = "at" if is_en else "à"
     events = []
     for t, y in phases:
         ld = local_date(t)
         if ld.year == year and ld.month == month:
-            events.append({"type": y, "name": PHASE_EVENT_NAMES[y], "date": ld.isoformat(),
-                           "time": hm(t, off), "label": f"{fr_date(ld)} à {hm(t, off)}"})
+            events.append({"type": y, "name": ev_names[y], "date": ld.isoformat(),
+                           "time": hm(t, off), "label": f"{fr_date(ld, lang=lang)} {at_word} {hm(t, off)}"})
 
+    h_months = HIJRI_MONTHS_EN if is_en else HIJRI_MONTHS
     days = []
     for i in range(nd):
         d = first + dt.timedelta(days=i)
@@ -450,7 +671,7 @@ def month_calendar(lat: float, lon: float, off: float, year: int, month: int) ->
         age_h = (ss.tt - prevs[-1].tt) * 24.0 if prevs else 999
         crescent = None
         if 0 < age_h <= 72:
-            c = crescent_eval(obs, ss, _nearest(msets, ss), age_h)
+            c = crescent_eval(obs, ss, _nearest(msets, ss), age_h, lang=lang)
             crescent = {"verdict_code": c["verdict_code"], "verdict_text": c["verdict_text"], "level": c["level"],
                         "odeh_v": c["odeh"]["v"] if c.get("possible") else None}
         rise_today = [hm(t, off) for t in mrises if local_date(t) == d]
@@ -459,7 +680,7 @@ def month_calendar(lat: float, lon: float, off: float, year: int, month: int) ->
         hy, hmo, hd = hijri_from_date(d)
         days.append({
             "date": d.isoformat(), "day": d.day, "weekday": d.weekday(),
-            "phase": phase_name(ang), "phase_angle": round(ang, 1), "illumination": round(illum, 1),
+            "phase": phase_name(ang, lang=lang), "phase_angle": round(ang, 1), "illumination": round(illum, 1),
             "waxing": waxing, "sunset": hm(ss, off),
             "moonrise": rise_today[0] if rise_today else None,
             "moonset": set_today[0] if set_today else None,
@@ -467,27 +688,28 @@ def month_calendar(lat: float, lon: float, off: float, year: int, month: int) ->
             "age_hours": round(age_h, 1) if age_h < 999 else None,
             "events": [e["name"] for e in events if e["date"] == d.isoformat()],
             "crescent": crescent,
-            "hijri_estimate": f"{hd} {HIJRI_MONTHS[hmo - 1]} {hy}",
+            "hijri_estimate": f"{hd} {h_months[hmo - 1]} {hy}",
         })
-    return {"year": year, "month": month, "month_label": f"{MONTHS_FR[month - 1].capitalize()} {year}",
-            "utc_offset": off, "events": events, "days": days}
+    m_list = MONTHS_EN if is_en else MONTHS_FR
+    return {"year": year, "month": month, "month_label": f"{m_list[month - 1].capitalize()} {year}",
+            "utc_offset": off, "events": events, "days": days, "lang": lang}
 
 # ─────────────────────────── Analyse Hilal (début de mois) ───────────────────────────
 
-def _crescent_summary(lat, lon, off, d, nm):
+def _crescent_summary(lat, lon, off, d, nm, lang: str = "fr"):
     """Visibilité du croissant le soir du jour d, pour la conjonction nm."""
     obs = observer(lat, lon)
     sunset = _sunset_on(obs, d, off)
     moonset = _nearest(_events(almanac.find_settings, obs, MOON, shift(sunset, -0.5), shift(sunset, 0.6)), sunset)
     age_h = (sunset.tt - nm.tt) * 24.0  # négatif si la conjonction a lieu après le coucher du Soleil
-    c = crescent_eval(obs, sunset, moonset, age_h)
+    c = crescent_eval(obs, sunset, moonset, age_h, lang=lang)
     out = _clean_crescent(c, off)
-    out.update({"date": d.isoformat(), "date_label": fr_date(d), "sunset": hm(sunset, off),
+    out.update({"date": d.isoformat(), "date_label": fr_date(d, lang=lang), "sunset": hm(sunset, off),
                 "moonset": hm(moonset, off), "sunset_utc": sunset.utc_datetime().strftime("%Y-%m-%dT%H:%M")})
     return out
 
 
-def _start_dates(evenings):
+def _start_dates(evenings, lang: str = "fr"):
     naked = next((e for e in evenings if e["verdict_code"] == "naked_eye"), None)
     optical = next((e for e in evenings if e["verdict_code"] in ("naked_eye", "naked_eye_possible", "optical_only")),
                    None)
@@ -497,15 +719,16 @@ def _start_dates(evenings):
         return dt.date.fromisoformat(e["date"]) + dt.timedelta(days=1) if e else last + dt.timedelta(days=1)
 
     sn, so = nxt(naked), nxt(optical)
-    return {"start_naked_eye": sn.isoformat(), "start_naked_eye_label": fr_date(sn),
-            "start_with_instruments": so.isoformat(), "start_with_instruments_label": fr_date(so),
+    return {"start_naked_eye": sn.isoformat(), "start_naked_eye_label": fr_date(sn, lang=lang),
+            "start_with_instruments": so.isoformat(), "start_with_instruments_label": fr_date(so, lang=lang),
             "first_naked_eye_evening": naked["date"] if naked else None}
 
 
-def country_main_cities(country_code: str) -> list:
+def country_main_cities(country_code: str, lang: str | None = None) -> list:
     """Retourne uniquement les villes principales du pays de l'utilisateur (1 à 2 par région)."""
+    lang = resolve_lang(lang, country_code)
     cat = COUNTRIES_CATALOG.get((country_code or "SN").upper(), COUNTRIES_CATALOG["SN"])
-    cname = cat["name"].split(" (")[0]
+    cname = country_display_name(cat["code"], cat["name"], lang=lang)
     flag = cat["flag"]
     default_tz = cat["tz"]
     out = []
@@ -527,40 +750,44 @@ def country_main_cities(country_code: str) -> list:
     return out
 
 
-def hilal_from_new_moon(nm, lat, lon, off, country_code: str = "SN"):
+def hilal_from_new_moon(nm, lat, lon, off, country_code: str = "SN", lang: str | None = None):
+    lang = resolve_lang(lang, country_code)
+    is_en = lang == "en"
+    at_word = "at" if is_en else "à"
     conj = t_to_local(nm, off)
-    hy, hmo, hname = month_starting_after(conj.date())
+    hy, hmo, hname = month_starting_after(conj.date(), lang=lang)
     evening_dates = [conj.date() + dt.timedelta(days=k) for k in range(3)]
-    loc_evenings = [_crescent_summary(lat, lon, off, d, nm) for d in evening_dates]
-    target_cities = country_main_cities(country_code)
+    loc_evenings = [_crescent_summary(lat, lon, off, d, nm, lang=lang) for d in evening_dates]
+    target_cities = country_main_cities(country_code, lang=lang)
     cities = []
     for c in target_cities:
-        ev = [_crescent_summary(c["lat"], c["lon"], c["tz"], d, nm) for d in evening_dates]
-        cities.append({**c, "evenings": ev, **_start_dates(ev)})
+        ev = [_crescent_summary(c["lat"], c["lon"], c["tz"], d, nm, lang=lang) for d in evening_dates]
+        cities.append({**c, "evenings": ev, **_start_dates(ev, lang=lang)})
     return {
         "conjunction_local": conj.strftime("%Y-%m-%dT%H:%M"),
-        "conjunction_label": f"{fr_date(conj.date())} à {conj.strftime('%H:%M')}",
+        "conjunction_label": f"{fr_date(conj.date(), lang=lang)} {at_word} {conj.strftime('%H:%M')}",
         "conjunction_utc": nm.utc_datetime().strftime("%Y-%m-%dT%H:%M"),
         "hijri_month": hname, "hijri_month_number": hmo, "hijri_year": hy,
         "country_code": (country_code or "SN").upper(),
-        "evenings": [{"date": d.isoformat(), "label": fr_date(d)} for d in evening_dates],
-        "location": {"evenings": loc_evenings, **_start_dates(loc_evenings)},
+        "evenings": [{"date": d.isoformat(), "label": fr_date(d, lang=lang)} for d in evening_dates],
+        "location": {"evenings": loc_evenings, **_start_dates(loc_evenings, lang=lang)},
         "cities": cities,
+        "lang": lang,
     }
 
 
-def hilal_analysis(lat, lon, off, from_date: dt.date, country_code: str = "SN"):
+def hilal_analysis(lat, lon, off, from_date: dt.date, country_code: str = "SN", lang: str | None = None):
     t0 = local_to_t(from_date - dt.timedelta(days=1), 0, off)
     nm = new_moons_between(t0, shift(t0, 32))[0]
-    return hilal_from_new_moon(nm, lat, lon, off, country_code)
+    return hilal_from_new_moon(nm, lat, lon, off, country_code, lang=lang)
 
 
-def hijri_month_analysis(lat, lon, off, target_month: int, from_date: dt.date, country_code: str = "SN"):
+def hijri_month_analysis(lat, lon, off, target_month: int, from_date: dt.date, country_code: str = "SN", lang: str | None = None):
     t0 = local_to_t(from_date - dt.timedelta(days=27), 0, off)
     for nm in new_moons_between(t0, shift(t0, 420)):
         _, m, _ = month_starting_after(t_to_local(nm, off).date())
         if m == target_month:
-            return hilal_from_new_moon(nm, lat, lon, off, country_code)
+            return hilal_from_new_moon(nm, lat, lon, off, country_code, lang=lang)
     raise ValueError("Mois introuvable")
 
 
@@ -890,12 +1117,14 @@ COUNTRIES_CATALOG = {
 }
 
 
-def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, day_offset: int = -1) -> dict:
+def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, day_offset: int = -1, lang: str | None = None) -> dict:
     """
     Analyse complète de toutes les régions/villes d'un pays.
     - Si hijri_month in 1..12 : cible la conjonction de ce mois hégirien (ex: 9 = Ramadan).
     - Si day_offset in (0, 1, 2) : choisit le soir J+day_offset après la conjonction.
     """
+    lang = resolve_lang(lang, country_code)
+    is_en = lang == "en"
     cat = COUNTRIES_CATALOG.get(country_code.upper(), COUNTRIES_CATALOG["SN"])
     default_tz = cat["tz"]
 
@@ -903,7 +1132,7 @@ def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, da
         t0 = local_to_t(d - dt.timedelta(days=27), 0, default_tz)
         nm = None
         for cand in new_moons_between(t0, shift(t0, 420)):
-            _, m, _ = month_starting_after(t_to_local(cand, default_tz).date())
+            _, m, _ = month_starting_after(t_to_local(cand, default_tz).date(), lang=lang)
             if m == hijri_month:
                 nm = cand
                 break
@@ -929,12 +1158,12 @@ def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, da
         loc_list = []
         for loc in reg["localities"]:
             tz = loc.get("tz", default_tz)
-            c = _crescent_summary(loc["lat"], loc["lon"], tz, d, nm)
+            c = _crescent_summary(loc["lat"], loc["lon"], tz, d, nm, lang=lang)
             odeh_v = c["odeh"]["v"] if c.get("possible") and c.get("odeh") else -99.0
             yallop_q = c["yallop"]["q"] if c.get("possible") and c.get("yallop") else -9.9
             item = {
                 "name": loc["name"],
-                "type": loc["type"],
+                "type": translate_locality_type(loc["type"], lang=lang),
                 "region": reg["region"],
                 "lat": loc["lat"],
                 "lon": loc["lon"],
@@ -981,60 +1210,90 @@ def scan_country_regions(country_code: str, d: dt.date, hijri_month: int = 0, da
         "total": len(all_locs),
     }
 
-    clean_country = cat["name"].split(" (")[0]
+    clean_country = country_display_name(cat["code"], cat["name"], lang=lang)
     if sentinel["verdict_code"] == "not_visible":
-        rule_title = f"IMPOSSIBLE À VOIR DANS TOUT LE PAYS ({clean_country})"
-        rule_text = (
-            f"Le point géographiquement le plus favorable est {sentinel['name']} (Région de {sentinel['region']}). "
-            f"Même en ce Point Sentinelle, le croissant est scientifiquement invisible "
-            f"({sentinel['verdict_text'].lower()}). D'après les lois de la mécanique céleste, "
-            f"si la Lune n'est pas visible au point le plus favorable, il est mathématiquement impossible "
-            f"de l'apercevoir dans aucune autre région, ville ou village ce soir-là."
-        )
+        if is_en:
+            rule_title = f"IMPOSSIBLE TO SEE ANYWHERE IN THE COUNTRY ({clean_country})"
+            rule_text = (
+                f"The most geographically favorable point is {sentinel['name']} ({sentinel['region']} Region). "
+                f"Even at this National Sentinel Point, the crescent is scientifically invisible "
+                f"({sentinel['verdict_text'].lower()}). By the laws of celestial mechanics, "
+                f"if the Moon cannot be seen at the most favorable location, it is mathematically impossible "
+                f"to sight it in any other region, city, or village tonight."
+            )
+        else:
+            rule_title = f"IMPOSSIBLE À VOIR DANS TOUT LE PAYS ({clean_country})"
+            rule_text = (
+                f"Le point géographiquement le plus favorable est {sentinel['name']} (Région de {sentinel['region']}). "
+                f"Même en ce Point Sentinelle, le croissant est scientifiquement invisible "
+                f"({sentinel['verdict_text'].lower()}). D'après les lois de la mécanique céleste, "
+                f"si la Lune n'est pas visible au point le plus favorable, il est mathématiquement impossible "
+                f"de l'apercevoir dans aucune autre région, ville ou village ce soir-là."
+            )
         rule_level = "bad"
     elif counts["naked_eye"] == counts["total"]:
-        rule_title = f"VISIBLE À L'ŒIL NU DANS TOUTES LES RÉGIONS ({clean_country})"
-        rule_text = (
-            f"Le croissant est visible à l'œil nu dans les {counts['total']} localités analysées "
-            f"(du Point Sentinelle {sentinel['name']} jusqu'à {worst['name']}), sous réserve d'un ciel dégagé."
-        )
+        if is_en:
+            rule_title = f"VISIBLE TO THE NAKED EYE IN ALL REGIONS ({clean_country})"
+            rule_text = (
+                f"The crescent is visible to the naked eye across all {counts['total']} analyzed localities "
+                f"(from Sentinel Point {sentinel['name']} to {worst['name']}), provided the sky is clear."
+            )
+        else:
+            rule_title = f"VISIBLE À L'ŒIL NU DANS TOUTES LES RÉGIONS ({clean_country})"
+            rule_text = (
+                f"Le croissant est visible à l'œil nu dans les {counts['total']} localités analysées "
+                f"(du Point Sentinelle {sentinel['name']} jusqu'à {worst['name']}), sous réserve d'un ciel dégagé."
+            )
         rule_level = "good"
     else:
-        rule_title = f"VISIBILITÉ DIFFÉRENCIÉE SELON LES RÉGIONS ({clean_country})"
-        rule_text = (
-            f"Le Point Sentinelle le plus favorable est {sentinel['name']} ({sentinel['region']}) avec "
-            f"V = {sentinel['odeh_v'] if sentinel['odeh_v'] is not None else '—'} ({sentinel['verdict_text']}). "
-            f"Bilan : {counts['naked_eye']} localité(s) visible(s) à l'œil nu, "
-            f"{counts['naked_eye_possible']} possible(s) avec repérage optique, "
-            f"{counts['optical_only']} aux instruments uniquement, et {counts['not_visible']} non visible(s)."
-        )
+        if is_en:
+            rule_title = f"REGIONAL VISIBILITY VARIATION ({clean_country})"
+            rule_text = (
+                f"The most favorable Sentinel Point is {sentinel['name']} ({sentinel['region']}) with "
+                f"V = {sentinel['odeh_v'] if sentinel['odeh_v'] is not None else '—'} ({sentinel['verdict_text']}). "
+                f"Summary: {counts['naked_eye']} locality(ies) visible to the naked eye, "
+                f"{counts['naked_eye_possible']} possible with optical aid, "
+                f"{counts['optical_only']} with instruments only, and {counts['not_visible']} not visible."
+            )
+        else:
+            rule_title = f"VISIBILITÉ DIFFÉRENCIÉE SELON LES RÉGIONS ({clean_country})"
+            rule_text = (
+                f"Le Point Sentinelle le plus favorable est {sentinel['name']} ({sentinel['region']}) avec "
+                f"V = {sentinel['odeh_v'] if sentinel['odeh_v'] is not None else '—'} ({sentinel['verdict_text']}). "
+                f"Bilan : {counts['naked_eye']} localité(s) visible(s) à l'œil nu, "
+                f"{counts['naked_eye_possible']} possible(s) avec repérage optique, "
+                f"{counts['optical_only']} aux instruments uniquement, et {counts['not_visible']} non visible(s)."
+            )
         rule_level = "maybe" if (counts["naked_eye"] + counts["naked_eye_possible"]) > 0 else "optical"
 
     for x in all_locs:
         x.pop("_score", None)
 
-    hy, _, hname = month_starting_after(conj_local.date())
+    hy, _, hname = month_starting_after(conj_local.date(), lang=lang)
+    at_word = "at" if is_en else "à"
+    era = "AH" if is_en else "H"
 
     return {
         "country_code": cat["code"],
-        "country_name": cat["name"],
+        "country_name": clean_country,
         "flag": cat["flag"],
         "date": d.isoformat(),
-        "date_label": fr_date(d),
-        "evenings": [{"date": ed.isoformat(), "label": fr_date(ed), "index": idx}
+        "date_label": fr_date(d, lang=lang),
+        "evenings": [{"date": ed.isoformat(), "label": fr_date(ed, lang=lang), "index": idx}
                      for idx, ed in enumerate(evening_dates)],
-        "hijri_target": f"{hname} {hy} H",
-        "conjunction_label": f"{fr_date(conj_local.date())} à {conj_local.strftime('%H:%M')} (UTC{default_tz:+d})",
+        "hijri_target": f"{hname} {hy} {era}",
+        "conjunction_label": f"{fr_date(conj_local.date(), lang=lang)} {at_word} {conj_local.strftime('%H:%M')} (UTC{default_tz:+d})",
         "sentinel": sentinel,
         "rule_title": rule_title,
         "rule_text": rule_text,
         "rule_level": rule_level,
         "counts": counts,
         "regions": regions_out,
+        "lang": lang,
     }
 
 
-def nearest_locality(lat: float, lon: float) -> dict:
+def nearest_locality(lat: float, lon: float, lang: str | None = None) -> dict:
     """Trouve la localité répertoriée la plus proche des coordonnées GPS (formule de Haversine)."""
     best = None
     best_dist = 1e9
@@ -1050,11 +1309,12 @@ def nearest_locality(lat: float, lon: float) -> dict:
                 dist = 6371.0 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
                 if dist < best_dist:
                     best_dist = dist
+                    resolved_lang = resolve_lang(lang, ccode)
                     best = {
                         "name": loc["name"].split(" (")[0],
                         "full_name": loc["name"],
                         "region": reg["region"],
-                        "country": cat["name"].split(" (")[0],
+                        "country": country_display_name(ccode, cat["name"], lang=resolved_lang),
                         "country_code": ccode,
                         "flag": cat["flag"],
                         "lat": round(lat, 4),
@@ -1063,6 +1323,7 @@ def nearest_locality(lat: float, lon: float) -> dict:
                         "distance_km": round(dist, 1),
                         "tz": loc.get("tz", cat["tz"]),
                         "region_count": len(cat["regions"]),
-                        "country_cities": country_main_cities(ccode),
+                        "country_cities": country_main_cities(ccode, lang=resolved_lang),
+                        "lang": resolved_lang,
                     }
     return best

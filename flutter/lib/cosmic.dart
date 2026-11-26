@@ -138,7 +138,8 @@ class LoadingBlock extends StatelessWidget {
 class ErrorBlock extends StatelessWidget {
   final String text;
   final VoidCallback? onRetry;
-  const ErrorBlock(this.text, {super.key, this.onRetry});
+  final String retryLabel;
+  const ErrorBlock(this.text, {super.key, this.onRetry, this.retryLabel = 'Retry / Réessayer'});
 
   @override
   Widget build(BuildContext context) {
@@ -150,7 +151,7 @@ class ErrorBlock extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(child: Text(text, style: const TextStyle(color: Colors.white))),
           if (onRetry != null)
-            TextButton(onPressed: onRetry, child: const Text('Réessayer', style: TextStyle(color: kGold))),
+            TextButton(onPressed: onRetry, child: Text(retryLabel, style: const TextStyle(color: kGold))),
         ],
       ),
     );
@@ -661,10 +662,11 @@ class HorizonPainter extends CustomPainter {
 
 // ═══════════════════════════ BOUSSOLE ASTRONOMIQUE DE VISÉE ═══════════════════════════
 class CompassPainter extends CustomPainter {
-  final double moonAz; // 0..360 (0=N, 90=E, 180=S, 270=O)
+  final double moonAz; // 0..360 (0=N, 90=E, 180=S, 270=O/W)
   final double sunAz;
   final double moonAlt;
-  CompassPainter({required this.moonAz, required this.sunAz, required this.moonAlt});
+  final String westLabel;
+  CompassPainter({required this.moonAz, required this.sunAz, required this.moonAlt, this.westLabel = 'O'});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -713,12 +715,12 @@ class CompassPainter extends CustomPainter {
       );
     }
 
-    // Points cardinaux N, E, S, O
-    const cardinals = [
+    // Points cardinaux N, E, S, O / W
+    final cardinals = [
       ('N', -math.pi / 2, kCyan),
       ('E', 0.0, Colors.white70),
       ('S', math.pi / 2, Colors.white70),
-      ('O', math.pi, kGold),
+      (westLabel, math.pi, kGold),
     ];
     for (final item in cardinals) {
       final pos = c + Offset(math.cos(item.$2), math.sin(item.$2)) * (r - 22);
